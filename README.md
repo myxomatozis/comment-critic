@@ -1,5 +1,7 @@
 # comment-critic
 
+![comment critic — an eleven line comment block cut down to two](assets/banner.svg)
+
 A Claude Code plugin. One advisory hook: after any write, if a comment block runs longer than
 8 lines, it says where and asks three questions — **is it needed, will it change what someone
 does, can it be shorter?** It cannot judge. You answer.

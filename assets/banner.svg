@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 344" width="880" height="344" role="img" aria-label="comment critic: an eleven line comment block cut down to two">
+  <rect width="880" height="344" rx="14" fill="#0d1117"/>
+  <rect x="0.5" y="0.5" width="879" height="343" rx="14" fill="none" stroke="#30363d"/>
+
+  <text x="40" y="56" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="26" font-weight="600" fill="#e6edf3">comment critic</text>
+  <text x="40" y="84" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#8b949e">is it needed?&#160;&#160;&#160;will it change what someone does?&#160;&#160;&#160;can it be shorter?</text>
+
+  <rect x="44" y="116" width="3" height="120" rx="1.5" fill="#6e7681" opacity="0.5"/>
+  <rect x="44" y="236" width="3" height="36" rx="1.5" fill="#f85149" opacity="0.8"/>
+  <rect x="64" y="116" width="212" height="6" rx="3" fill="#6e7681" opacity="0.65"/>
+    <rect x="64" y="131" width="178" height="6" rx="3" fill="#6e7681" opacity="0.65"/>
+    <rect x="64" y="146" width="236" height="6" rx="3" fill="#6e7681" opacity="0.65"/>
+    <rect x="64" y="161" width="158" height="6" rx="3" fill="#6e7681" opacity="0.65"/>
+    <rect x="64" y="176" width="204" height="6" rx="3" fill="#6e7681" opacity="0.65"/>
+    <rect x="64" y="191" width="188" height="6" rx="3" fill="#6e7681" opacity="0.65"/>
+    <rect x="64" y="206" width="148" height="6" rx="3" fill="#6e7681" opacity="0.65"/>
+    <rect x="64" y="221" width="222" height="6" rx="3" fill="#6e7681" opacity="0.65"/>
+    <rect x="64" y="236" width="176" height="6" rx="3" fill="#f85149" opacity="0.95"/>
+    <rect x="64" y="251" width="198" height="6" rx="3" fill="#f85149" opacity="0.95"/>
+    <rect x="64" y="266" width="132" height="6" rx="3" fill="#f85149" opacity="0.95"/>
+
+  <line x1="34" y1="231" x2="330" y2="231" stroke="#f85149" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"/>
+  <text x="340" y="235" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#f85149" opacity="0.9">8</text>
+  <text x="64" y="296" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#8b949e">11 lines</text>
+
+  <path d="M446 196 h58" stroke="#484f58" stroke-width="2" fill="none"/>
+  <path d="M498 190 l8 6 -8 6" stroke="#484f58" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="556" y="188" width="204" height="6" rx="3" fill="#3fb950" opacity="0.9"/>
+  <rect x="556" y="203" width="148" height="6" rx="3" fill="#3fb950" opacity="0.9"/>
+  <rect x="540" y="188" width="3" height="21" rx="1.5" fill="#3fb950" opacity="0.6"/>
+  <text x="556" y="238" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#8b949e">2 lines</text>
+
+  <text x="40" y="322" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#484f58">comment why, never what &#183; the code says what</text>
+</svg>
