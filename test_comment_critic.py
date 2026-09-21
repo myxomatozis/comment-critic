@@ -5,9 +5,9 @@ import json, subprocess, sys, pathlib
 HOOK = str(pathlib.Path(__file__).parent / "hooks" / "comment-critic.py")
 
 
-def run(payload):
+def run(payload, env=None):
     p = subprocess.run([sys.executable, HOOK], input=json.dumps(payload),
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=env)
     return p.returncode, p.stderr
 
 
@@ -32,5 +32,24 @@ assert code == 0, "markdown must not fire"
 
 code, _ = run({"tool_name": "Read", "tool_input": {"file_path": "a.swift"}})
 assert code == 0
+
+# A Write of markdown must not fire — the Bash path filtered by extension, this one did not.
+code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "README.md", "content": long_block}})
+assert code == 0, "markdown Write must not fire"
+
+# Two short blocks from separate edits must not concatenate into one long one.
+code, _ = run({"tool_name": "MultiEdit", "tool_input": {"file_path": "a.swift", "edits": [
+    {"new_string": short_block}, {"new_string": short_block}]}})
+assert code == 0, "separate edits must not merge into one run"
+
+# A junk threshold must fall back, not traceback on every write.
+import os
+env = dict(os.environ, COMMENT_CRITIC_THRESHOLD="eight")
+code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
+assert code == 2 and "Traceback" not in err, err
+
+env = dict(os.environ, COMMENT_CRITIC_THRESHOLD="20", COMMENT_CRITIC_HOME="docs/backlog/")
+code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
+assert code == 0, "raised threshold must silence a 12-line block"
 
 print("ok")

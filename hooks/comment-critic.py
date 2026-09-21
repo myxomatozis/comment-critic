@@ -11,7 +11,8 @@ import os
 import re
 import sys
 
-THRESHOLD = int(os.environ.get("COMMENT_CRITIC_THRESHOLD", 8))
+_raw = os.environ.get("COMMENT_CRITIC_THRESHOLD", "")
+THRESHOLD = int(_raw) if _raw.isdigit() else 8
 HOME = os.environ.get("COMMENT_CRITIC_HOME", "a doc")
 COMMENT = re.compile(r"^\s*(//|///|#|\*(?!/))")
 
@@ -65,7 +66,7 @@ def written(tool, data):
     if tool == "Edit":
         return data.get("new_string", "")
     if tool == "MultiEdit":
-        return "\n".join(e.get("new_string", "") for e in data.get("edits", []))
+        return "\n\n".join(e.get("new_string", "") for e in data.get("edits", []))
     if tool == "Bash":
         return bash_source_writes(data.get("command", ""))
     return ""
@@ -87,6 +88,8 @@ def main():
         path = ", ".join(bash_source_targets(tool_input.get("command", ""))) or "?"
     else:
         path = tool_input.get("file_path", "?")
+        if not path.endswith(SOURCE):
+            return 0
     found = list(runs(written(tool, tool_input)))
     if not found:
         return 0

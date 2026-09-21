@@ -40,3 +40,31 @@ can it be shorter?** Default to none.
 ## Check
 
 `python3 test_comment_critic.py`
+
+## Sharing
+
+The repo is both the plugin and its marketplace, so one URL does everything.
+
+```
+cd ~/Scripts/comment-critic
+gh repo create comment-critic --public --source=. --push
+```
+
+Anyone then installs with:
+
+```
+/plugin marketplace add <you>/comment-critic
+/plugin install comment-critic@comment-critic
+```
+
+Bump `version` in `.claude-plugin/plugin.json` when you change the hook; `/plugin update` reads it.
+
+## Installing locally, no GitHub
+
+```
+/plugin marketplace add ~/Scripts/comment-critic
+/plugin install comment-critic@comment-critic
+```
+
+Same two commands against a path. Edits to the working copy are live on the next session, which
+makes this the way to try a change before pushing it.
