@@ -49,13 +49,13 @@ The repo is both the plugin and its marketplace, so one URL does everything.
 
 ```
 cd ~/Scripts/comment-critic
-gh repo create comment-critic --public --source=. --push
+git push
 ```
 
 Anyone then installs with:
 
 ```
-/plugin marketplace add <you>/comment-critic
+/plugin marketplace add myxomatozis/comment-critic
 /plugin install comment-critic@comment-critic
 ```
 
