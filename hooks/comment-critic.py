@@ -8,7 +8,10 @@ Advisory: the edit already happened. It asks the three questions; it cannot answ
 """
 import json
 import os
+import pathlib
 import re
+import subprocess
+import tempfile
 import sys
 
 _raw = os.environ.get("COMMENT_CRITIC_THRESHOLD", "")
@@ -37,27 +40,52 @@ def runs(text):
 #: document written, which is how a hook gets switched off.
 SOURCE = (".swift", ".py", ".sh", ".rb", ".js", ".ts", ".tsx", ".java", ".kt",
           ".c", ".h", ".cpp", ".m", ".mm", ".go", ".rs")
-#: `cmd > path.swift`, `cmd >> path.swift`, `tee path.swift` — the write targets worth scanning.
-REDIRECT = re.compile(r"(?:>>?|\btee\s+(?:-a\s+)?)\s*['\"]?([^\s'\"|;&]+)")
-#: A quoted or bare heredoc body, up to its terminator at the start of a line.
-HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?\s*\n(.*?)\n\1", re.S)
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)")
 
 
-def bash_source_targets(command):
-    """The source files this command redirects into. Also the only filename a Bash payload offers."""
-    return [t for t in REDIRECT.findall(command) if t.endswith(SOURCE)]
+def bash_added(cwd):
+    """Yield (path, start_line, length) for long comment blocks this command added.
 
-
-def bash_source_writes(command):
-    """The heredoc bodies this command writes into a source file, joined.
-
-    Auto mode steers file writes through Bash heredocs rather than Write/Edit, so a hook matching
-    only the edit tools sees none of them. Scans the body, not the whole command, so a script that
-    merely mentions a path is not read as one that writes it.
+    Bash writes a file a hundred ways — a heredoc, `sed -i`, a python one-liner, a generator
+    script. Parsing the command to find them is unwinnable, so this asks git what landed instead.
+    Unstaged only: the just-written change, not the whole branch's uncommitted work.
     """
-    if not bash_source_targets(command):
-        return ""
-    return "\n".join(body for _, body in HEREDOC.findall(command))
+    def git(*args):
+        return subprocess.run(("git",) + args, cwd=cwd, capture_output=True, text=True, timeout=3)
+
+    try:
+        diff = git("diff", "-U0", "--no-color", "--no-ext-diff")
+        new = git("ls-files", "--others", "--exclude-standard")
+    except Exception:
+        return
+    if diff.returncode or new.returncode:
+        return
+
+    # A file git has never seen has no diff — every line of it is new.
+    for name in new.stdout.split("\n"):
+        if name.endswith(SOURCE):
+            try:
+                body = (pathlib.Path(cwd) / name).read_text(errors="replace")
+            except OSError:
+                continue
+            for start, length in runs(body):
+                yield name, start, length
+
+    path, base, added = None, 0, []
+    for line in diff.stdout.split("\n") + ["diff --git "]:
+        if line.startswith(("diff --git ", "@@ ")):
+            if path and added:
+                for s, n in runs("\n".join(added)):
+                    yield path, base + s - 1, n
+            added = []
+            hunk = _HUNK.match(line)
+            if hunk:
+                base = int(hunk.group(1))
+        elif line.startswith("+++ b/"):
+            target = line[6:]
+            path = target if target.endswith(SOURCE) else None
+        elif line.startswith("+") and path:
+            added.append(line[1:])
 
 
 def written(tool, data):
@@ -67,9 +95,25 @@ def written(tool, data):
         return data.get("new_string", "")
     if tool == "MultiEdit":
         return "\n\n".join(e.get("new_string", "") for e in data.get("edits", []))
-    if tool == "Bash":
-        return bash_source_writes(data.get("command", ""))
     return ""
+
+
+def unseen(hits, cwd):
+    """Drop hits already reported. A block stays in the diff until fixed or committed, so
+    without this every later Bash command repeats the same warning until it is noise."""
+    cache = pathlib.Path(tempfile.gettempdir()) / "comment-critic-seen"
+    try:
+        old = set(cache.read_text().split("\n"))
+    except OSError:
+        old = set()
+    fresh = [h for h in hits if f"{cwd}:{h[0]}:{h[2]}" not in old]
+    if fresh:
+        try:
+            keys = list(old | {f"{cwd}:{h[0]}:{h[2]}" for h in fresh})
+            cache.write_text("\n".join(keys[-500:]))
+        except OSError:
+            pass
+    return fresh
 
 
 def main():
@@ -83,21 +127,23 @@ def main():
         return 0
 
     tool_input = payload.get("tool_input", {})
-    # A Bash payload carries no `file_path`, and "?" tells the reader nothing about where to look.
     if tool == "Bash":
-        path = ", ".join(bash_source_targets(tool_input.get("command", ""))) or "?"
+        cwd = payload.get("cwd") or os.getcwd()
+        hits = unseen(list(bash_added(cwd)), cwd)
     else:
         path = tool_input.get("file_path", "?")
         if not path.endswith(SOURCE):
             return 0
-    found = list(runs(written(tool, tool_input)))
-    if not found:
+        hits = [(path, s, n) for s, n in runs(written(tool, tool_input))]
+    if not hits:
         return 0
 
+    found = [(s, n) for _, s, n in hits]
+    path = ", ".join(dict.fromkeys(h[0] for h in hits))
     where = ", ".join(f"~line {s} ({n} lines)" for s, n in found[:3])
     print(
         f"Comment block over {THRESHOLD} lines in {path}: {where}.\n"
-        "Three questions, per CLAUDE.md: is it needed? will it change what someone does? "
+        "Three questions: is it needed? will it change what someone does? "
         "can it be shorter?\n"
         "Comment why, not what. If the explanation is longer than the code, cut the explanation. "
         f"A ruling or a measurement belongs in {HOME} — link, don't restate.",

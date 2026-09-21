@@ -6,9 +6,15 @@ A Claude Code plugin. One advisory hook: after any write, if a comment block run
 8 lines, it says where and asks three questions — **is it needed, will it change what someone
 does, can it be shorter?** It cannot judge. You answer.
 
-Catches writes through `Write`, `Edit`, `MultiEdit`, and Bash heredocs redirected into a source
-file (auto mode writes that way). Source extensions only — a markdown heredoc is nearly all `#`
-headings and would fire on every document written, which is how a hook gets switched off.
+Catches the write however it happened. `Write`, `Edit` and `MultiEdit` are read from the tool
+payload; for `Bash` the hook asks `git` what actually changed, so a heredoc, `sed -i`, a `python3 -`
+one-liner, a generator script and a brand-new untracked file are all caught the same way. Parsing
+the command to guess which of those wrote what is unwinnable — there is always another `etc.`
+
+Source extensions only: a markdown heredoc is nearly all `#` headings and would fire on every
+document written, which is how a hook gets switched off. The `Bash` path needs a git repo and
+reports each block once — it stays in the diff until fixed or committed, and a warning that
+repeats on every command is noise.
 
 ## Install
 
