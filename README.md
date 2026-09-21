@@ -13,7 +13,7 @@ headings and would fire on every document written, which is how a hook gets swit
 ## Install
 
 ```
-/plugin marketplace add oleh-smirnov/comment-critic   # or a local path
+/plugin marketplace add myxomatozis/comment-critic
 /plugin install comment-critic@comment-critic
 ```
 
@@ -43,30 +43,13 @@ can it be shorter?** Default to none.
 
 `python3 test_comment_critic.py`
 
-## Sharing
+## Forking it
 
-The repo is both the plugin and its marketplace, so one URL does everything.
+The repo is its own marketplace — `.claude-plugin/marketplace.json` lists the plugin beside it,
+so one URL is both. A fork needs no extra wiring: push it, and
+`/plugin marketplace add <you>/comment-critic` works against yours.
 
-```
-cd ~/Scripts/comment-critic
-git push
-```
-
-Anyone then installs with:
-
-```
-/plugin marketplace add myxomatozis/comment-critic
-/plugin install comment-critic@comment-critic
-```
+To try a change before pushing, point the same command at a path — `/plugin marketplace add
+~/src/comment-critic`. Edits to the working copy are live on the next session.
 
 Bump `version` in `.claude-plugin/plugin.json` when you change the hook; `/plugin update` reads it.
-
-## Installing locally, no GitHub
-
-```
-/plugin marketplace add ~/Scripts/comment-critic
-/plugin install comment-critic@comment-critic
-```
-
-Same two commands against a path. Edits to the working copy are live on the next session, which
-makes this the way to try a change before pushing it.
