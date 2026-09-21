@@ -1,0 +1,18 @@
+{
+  "description": "Advisory PostToolUse check on comment block length",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/comment-critic.py\"",
+            "timeout": 5,
+            "statusMessage": "Checking comment length..."
+          }
+        ]
+      }
+    ]
+  }
+}

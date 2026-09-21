@@ -1,0 +1,8 @@
+{
+  "name": "comment-critic",
+  "version": "0.1.0",
+  "description": "Flags comment blocks long enough to need justifying, and asks the three questions",
+  "author": { "name": "Oleh Smirnov", "email": "oleh.smirnov@icloud.com" },
+  "license": "MIT",
+  "keywords": ["comments", "hooks", "code-quality"]
+}

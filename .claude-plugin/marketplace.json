@@ -1,0 +1,7 @@
+{
+  "name": "comment-critic",
+  "owner": { "name": "Oleh Smirnov" },
+  "plugins": [
+    { "name": "comment-critic", "source": "./", "description": "Flags over-long comment blocks on write" }
+  ]
+}
