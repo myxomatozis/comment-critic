@@ -1,7 +1,14 @@
 {
   "name": "comment-critic",
-  "owner": { "name": "Oleh Smirnov" },
+  "owner": {
+    "name": "Oleh Smirnov"
+  },
   "plugins": [
-    { "name": "comment-critic", "source": "./", "description": "Flags over-long comment blocks on write" }
-  ]
+    {
+      "name": "comment-critic",
+      "source": "./",
+      "description": "Flags over-long comment blocks on write"
+    }
+  ],
+  "description": "Flags comment blocks long enough to need justifying, and asks the three questions"
 }
