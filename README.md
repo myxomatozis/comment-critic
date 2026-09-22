@@ -23,13 +23,22 @@ repeats on every command is noise.
 /plugin install comment-critic@comment-critic
 ```
 
-## Tune
+## Tune — but you should not have to
+
+Install it and it works. A ruling has to be relocated *somewhere*, so the hook looks for that
+somewhere rather than making you declare it: the first of `docs/backlog/`, `docs/decisions/`,
+`docs/adr/`, `docs/rulings/`, `doc/adr/`, `adr/`, `docs/` that exists in the repo, and a
+`backlog`, `decisions` or `adr` skill under the repo's `.claude/skills/` or your own. Found
+nothing? It says "a doc" and drops the skill sentence — it never invents a path.
+
+The lookup only decides what the message *says*, so a wrong guess costs a misleading sentence,
+never a wrong write.
 
 | env | default | |
 |---|---|---|
 | `COMMENT_CRITIC_THRESHOLD` | `8` | Lines before a block is flagged. 8 is ~p80 of a real codebase's blocks. Measure your own: outliers by distribution beat outliers by taste. |
-| `COMMENT_CRITIC_HOME` | `a doc` | Where rulings and measurements belong, e.g. `docs/backlog/`. Named in the message. |
-| `COMMENT_CRITIC_SKILL` | unset | A skill that files them, e.g. `backlog`. Naming the destination is not the same as naming the tool that writes it there, so when this is set the message says to invoke the skill rather than hand-roll the file. Unset, the sentence is omitted entirely. |
+| `COMMENT_CRITIC_HOME` | discovered | Override when the answer is two places, or a name nobody else uses. |
+| `COMMENT_CRITIC_SKILL` | discovered | Override when your skill is not named after the thing it files. |
 
 ## The policy it enforces
 

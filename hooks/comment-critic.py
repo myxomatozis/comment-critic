@@ -3,8 +3,8 @@
 
 Default threshold is 8 lines — roughly p80 of a real codebase's comment blocks, so it fires on
 outliers by distribution rather than by taste. Set COMMENT_CRITIC_THRESHOLD to retune it against
-your own; COMMENT_CRITIC_HOME names where rulings live and COMMENT_CRITIC_SKILL the skill that
-files them, if either exists.
+your own. Where a ruling belongs, and the skill that files it, are discovered from the repo;
+COMMENT_CRITIC_HOME and COMMENT_CRITIC_SKILL override that.
 Advisory: the edit already happened. It asks the three questions; it cannot answer them.
 """
 import json
@@ -17,8 +17,30 @@ import sys
 
 _raw = os.environ.get("COMMENT_CRITIC_THRESHOLD", "")
 THRESHOLD = int(_raw) if _raw.isdigit() else 8
-HOME = os.environ.get("COMMENT_CRITIC_HOME", "a doc")
-SKILL = os.environ.get("COMMENT_CRITIC_SKILL", "")
+#: Conventional homes for a ruling, and the skills that file one. Looked up only to name them in
+#: the message, so a wrong guess costs a misleading sentence, never a wrong write.
+HOMES = ("docs/backlog", "docs/decisions", "docs/adr", "docs/rulings", "doc/adr", "adr", "docs")
+SKILLS = ("backlog", "decisions", "adr")
+
+
+def destination(cwd):
+    """Where a relocated ruling goes and which skill files it, discovered when unconfigured.
+
+    Zero config is the point: a repo that keeps decisions in `docs/adr/` should get told so
+    without anyone setting an env var first. The env still wins, for a repo whose answer is
+    two places or an unconventional name.
+    """
+    home = os.environ.get("COMMENT_CRITIC_HOME", "")
+    skill = os.environ.get("COMMENT_CRITIC_SKILL", "")
+    root = pathlib.Path(cwd)
+    if not home:
+        home = next((f"{n}/" for n in HOMES if (root / n).is_dir()), "a doc")
+    if not skill:
+        for base in (root / ".claude" / "skills", pathlib.Path.home() / ".claude" / "skills"):
+            skill = next((n for n in SKILLS if (base / n).is_dir()), "")
+            if skill:
+                break
+    return home, skill
 COMMENT = re.compile(r"^\s*(//|///|#|\*(?!/))")
 
 
@@ -129,8 +151,8 @@ def main():
         return 0
 
     tool_input = payload.get("tool_input", {})
+    cwd = payload.get("cwd") or os.getcwd()
     if tool == "Bash":
-        cwd = payload.get("cwd") or os.getcwd()
         hits = unseen(list(bash_added(cwd)), cwd)
     else:
         path = tool_input.get("file_path", "?")
@@ -140,6 +162,7 @@ def main():
     if not hits:
         return 0
 
+    home, skill = destination(cwd)
     found = [(s, n) for _, s, n in hits]
     path = ", ".join(dict.fromkeys(h[0] for h in hits))
     where = ", ".join(f"~line {s} ({n} lines)" for s, n in found[:3])
@@ -148,8 +171,8 @@ def main():
         "Three questions: is it needed? will it change what someone does? "
         "can it be shorter?\n"
         "Comment why, not what. If the explanation is longer than the code, cut the explanation. "
-        f"A ruling or a measurement belongs in {HOME} — link, don't restate."
-        + (f" Record it with the `{SKILL}` skill; do not hand-roll the file." if SKILL else ""),
+        f"A ruling or a measurement belongs in {home} — link, don't restate."
+        + (f" Record it with the `{skill}` skill; do not hand-roll the file." if skill else ""),
         file=sys.stderr,
     )
     return 2

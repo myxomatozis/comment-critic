@@ -42,14 +42,49 @@ env = dict(os.environ, COMMENT_CRITIC_THRESHOLD="20")
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
 assert code == 0, "raised threshold must silence a 12-line block"
 
+# Zero config: the home and the skill are discovered from the repo when nothing is set.
+bare = dict(os.environ)
+bare.pop("COMMENT_CRITIC_HOME", None)
+bare.pop("COMMENT_CRITIC_SKILL", None)
+
+sandbox = tempfile.mkdtemp()
+(pathlib.Path(sandbox) / "docs" / "adr").mkdir(parents=True)
+(pathlib.Path(sandbox) / ".claude" / "skills" / "decisions").mkdir(parents=True)
+code, err = run({"tool_name": "Write", "cwd": sandbox,
+                 "tool_input": {"file_path": "a.swift", "content": long_block}}, bare)
+assert code == 2 and "docs/adr/" in err, err
+assert "`decisions` skill" in err, err
+
+# A repo with no conventional home says "a doc" rather than inventing a path.
+empty = tempfile.mkdtemp()
+code, err = run({"tool_name": "Write", "cwd": empty,
+                 "tool_input": {"file_path": "a.swift", "content": long_block}}, bare)
+assert code == 2 and "belongs in a doc" in err, err
+
+# A user-level skill is found even when the repo has no .claude/skills of its own.
+user = tempfile.mkdtemp()
+(pathlib.Path(user) / ".claude" / "skills" / "backlog").mkdir(parents=True)
+code, err = run({"tool_name": "Write", "cwd": empty,
+                 "tool_input": {"file_path": "a.swift", "content": long_block}},
+                dict(bare, HOME=user))
+assert code == 2 and "`backlog` skill" in err, err
+
+# The env still wins over what was found on disk.
+override = dict(bare, COMMENT_CRITIC_HOME="RULINGS.md", COMMENT_CRITIC_SKILL="scribe")
+code, err = run({"tool_name": "Write", "cwd": sandbox,
+                 "tool_input": {"file_path": "a.swift", "content": long_block}}, override)
+assert code == 2 and "RULINGS.md" in err and "`scribe` skill" in err, err
+
 # The skill nudge appears only when a skill is named.
 env = dict(os.environ, COMMENT_CRITIC_SKILL="backlog", COMMENT_CRITIC_HOME="docs/backlog/")
 code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
 assert code == 2 and "`backlog` skill" in err and "docs/backlog/" in err, err
 
-env = dict(os.environ); env.pop("COMMENT_CRITIC_SKILL", None)
-code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
-assert code == 2 and "skill" not in err, err
+# A user-level skill applies in every repo, so silence needs neither project nor user skill.
+nowhere = dict(bare, HOME=tempfile.mkdtemp())
+code, err = run({"tool_name": "Write", "cwd": empty,
+                 "tool_input": {"file_path": "a.swift", "content": long_block}}, nowhere)
+assert code == 2 and "skill" not in err, "no skill found, no skill sentence"
 
 # --- Bash writes, however they land -------------------------------------------
 repo = tempfile.mkdtemp()
