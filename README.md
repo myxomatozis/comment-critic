@@ -29,6 +29,7 @@ repeats on every command is noise.
 |---|---|---|
 | `COMMENT_CRITIC_THRESHOLD` | `8` | Lines before a block is flagged. 8 is ~p80 of a real codebase's blocks. Measure your own: outliers by distribution beat outliers by taste. |
 | `COMMENT_CRITIC_HOME` | `a doc` | Where rulings and measurements belong, e.g. `docs/backlog/`. Named in the message. |
+| `COMMENT_CRITIC_SKILL` | unset | A skill that files them, e.g. `backlog`. Naming the destination is not the same as naming the tool that writes it there, so when this is set the message says to invoke the skill rather than hand-roll the file. Unset, the sentence is omitted entirely. |
 
 ## The policy it enforces
 

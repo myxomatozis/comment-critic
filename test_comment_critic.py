@@ -42,6 +42,15 @@ env = dict(os.environ, COMMENT_CRITIC_THRESHOLD="20")
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
 assert code == 0, "raised threshold must silence a 12-line block"
 
+# The skill nudge appears only when a skill is named.
+env = dict(os.environ, COMMENT_CRITIC_SKILL="backlog", COMMENT_CRITIC_HOME="docs/backlog/")
+code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
+assert code == 2 and "`backlog` skill" in err and "docs/backlog/" in err, err
+
+env = dict(os.environ); env.pop("COMMENT_CRITIC_SKILL", None)
+code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
+assert code == 2 and "skill" not in err, err
+
 # --- Bash writes, however they land -------------------------------------------
 repo = tempfile.mkdtemp()
 subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
