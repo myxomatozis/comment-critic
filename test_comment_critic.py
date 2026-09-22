@@ -21,7 +21,7 @@ assert code == 2 and "12 lines" in err, err
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": short_block}})
 assert code == 0
 
-code, _ = run({"tool_name": "Edit", "tool_input": {"file_path": "a.py", "new_string": long_block}})
+code, _ = run({"tool_name": "Edit", "tool_input": {"file_path": "a.ts", "new_string": long_block}})
 assert code == 2
 
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "README.md", "content": long_block}})
@@ -86,16 +86,70 @@ code, err = run({"tool_name": "Write", "cwd": empty,
                  "tool_input": {"file_path": "a.swift", "content": long_block}}, nowhere)
 assert code == 2 and "skill" not in err, "no skill found, no skill sentence"
 
+# Per-language comment markers: a marker is only a comment in its own language.
+LANGS = {
+    "a.swift": ("// %d", True), "a.go": ("// %d", True), "a.rs": ("// %d", True),
+    "a.py": ("# %d", True), "a.rb": ("# %d", True), "a.sh": ("# %d", True),
+    "a.sql": ("-- %d", True), "a.hs": ("-- %d", True), "a.lua": ("-- %d", True),
+    "a.clj": ("; %d", True), "a.el": ("; %d", True),
+    "a.tex": ("%% %d", True), "a.erl": ("%% %d", True),
+    "a.cs": ("// %d", True), "a.php": ("// %d", True), "a.dart": ("// %d", True),
+    "a.ex": ("# %d", True), "a.jl": ("# %d", True), "a.tf": ("# %d", True),
+    # a marker from the wrong language is just code
+    "b.go": ("# %d", False), "b.py": ("// %d", False), "b.sql": ("// %d", False),
+    "b.clj": ("# %d", False),
+}
+for name, (fmt, should) in LANGS.items():
+    body = "\n".join(fmt % i for i in range(12))
+    code, err = run({"tool_name": "Write", "tool_input": {"file_path": name, "content": body}})
+    assert (code == 2) is should, f"{name} with {fmt!r}: expected fire={should}, got {code}"
+
+# Block comments count even when their lines carry no marker of their own.
+c_block = "/*\n" + "\n".join(f"   paragraph {i}" for i in range(11)) + "\n*/"
+code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.c", "content": c_block}})
+assert code == 2 and "13 lines" in err, err  # the delimiters are comment lines too
+
+docstring = '"""\n' + "\n".join(f"prose {i}" for i in range(11)) + '\n"""'
+code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.py", "content": docstring}})
+assert code == 2 and "13 lines" in err, err
+
+# A long string that happens to be triple-quoted is data, not prose.
+query = 'SQL = """\n' + "\n".join(f"  select {i}," for i in range(11)) + '\n"""'
+code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.py", "content": query}})
+assert code == 0, "an assigned multi-line string is not a comment block"
+
+# A one-line block comment opens nothing.
+oneline = "\n".join("/* %d */" % i for i in range(12))
+code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.c", "content": oneline}})
+assert code == 2, "twelve one-line comments are still twelve comment lines"
+
+def block_for(path, n=12):
+    """A comment block in the language the path implies — otherwise a vendored-path test would
+    pass because the marker was wrong, not because the path was skipped."""
+    mark = {"py": "#", "rb": "#", "sh": "#", "ex": "#", "jl": "#", "tf": "#",
+            "sql": "--", "hs": "--", "lua": "--",
+            "clj": ";", "el": ";", "tex": "%", "erl": "%"}.get(
+        pathlib.PurePath(path).suffix.lstrip("."), "//")
+    return "\n".join(f"{mark} line {i}" for i in range(n))
+
+
 # Vendored trees are not yours to police, through either path.
 for junk in ("node_modules/left-pad/index.js", "Pods/Alamofire/Source/A.swift",
              "vendor/github.com/x/y.go", "deep/nested/third_party/z/a.py",
-             "build/generated/G.java", ".venv/lib/site-packages/q.py"):
-    code, _ = run({"tool_name": "Write", "tool_input": {"file_path": junk, "content": long_block}})
+             "build/generated/G.java", ".venv/lib/site-packages/q.py",
+             "target/debug/b.rs", "deps/phoenix/lib/a.ex", ".dart_tool/x/a.dart",
+             "obj/Release/A.cs", ".stack-work/x/A.hs", "__pycache__/a.py"):
+    assert run({"tool_name": "Write",
+                "tool_input": {"file_path": pathlib.PurePath(junk).name,
+                               "content": block_for(junk)}})[0] == 2, \
+        f"{junk} would fire if it were not vendored"
+    code, _ = run({"tool_name": "Write", "tool_input": {"file_path": junk,
+                                                        "content": block_for(junk)}})
     assert code == 0, f"{junk} must be skipped"
 
 # A path merely containing the word is still policed: only whole segments count.
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "src/vendored_helpers.py",
-                                                    "content": long_block}})
+                                                    "content": block_for("x.py")}})
 assert code == 2, "vendored_helpers.py is your code"
 
 # COMMENT_CRITIC_SKIP adds to the list without replacing it.
@@ -106,6 +160,15 @@ assert code == 0, "an added name must be skipped"
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "node_modules/a/b.js",
                                                     "content": long_block}}, env)
 assert code == 0, "the defaults must survive an addition"
+
+# A leading minus un-skips a default, for a repo whose real source lives in one.
+env = dict(os.environ, COMMENT_CRITIC_SKIP="-build")
+code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "build/tool.py",
+                                                    "content": block_for("x.py")}}, env)
+assert code == 2, "-build must put build/ back under the rule"
+code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "node_modules/a/b.js",
+                                                    "content": long_block}}, env)
+assert code == 0, "un-skipping one name must not disarm the rest"
 
 # --- Bash writes, however they land -------------------------------------------
 repo = tempfile.mkdtemp()

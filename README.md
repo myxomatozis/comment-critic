@@ -11,17 +11,50 @@ payload; for `Bash` the hook asks `git` what actually changed, so a heredoc, `se
 one-liner, a generator script and a brand-new untracked file are all caught the same way. Parsing
 the command to guess which of those wrote what is unwinnable — there is always another `etc.`
 
-Vendored trees are skipped through both paths — `node_modules`, `vendor`, `third_party`,
-`bower_components`, `Pods`, `Carthage`, `Godeps`, `.venv`, `venv`, `site-packages`, `.build`,
-`build`, `dist`, `target`, `.next`, `.nuxt`, `.yarn`, `bundle`. Their comments are not yours to
-police, and one `go mod vendor` or pod install would otherwise bury a real finding under
-thousands of them. Matching is on whole path segments, so `src/vendored_helpers.py` is still
-your code.
+## Languages
 
-Source extensions only: a markdown heredoc is nearly all `#` headings and would fire on every
-document written, which is how a hook gets switched off. The `Bash` path needs a git repo and
-reports each block once — it stays in the diff until fixed or committed, and a warning that
-repeats on every command is noise.
+A marker is only a comment in the language that uses it, so they are never pooled: `#` opens a
+comment in Python and a preprocessor directive in C. Markers are chosen by extension.
+
+| marker | languages |
+|---|---|
+| `//` + `/* */` | Swift, JS, TS, JSX/TSX, Java, Kotlin, C, C++, Objective-C, Go, Rust, C#, Scala, Dart, PHP, Zig, Groovy, Proto |
+| `#` | Python, Ruby, Shell, Perl, R, Julia, Nim, Crystal, Elixir, Terraform, YAML, TOML |
+| `--` | SQL, Haskell (`{- -}`), Lua (`--[[ ]]`), Elm, Ada |
+| `;` | Lisp, Clojure, Scheme, Emacs Lisp, assembly |
+| `%` | TeX, Erlang |
+| `!` | Fortran |
+
+Block comments count in full, including their delimiters, so a `/* … */` or a Python docstring is
+caught even though none of its lines carries a marker. An opener only counts when it *starts* the
+line — `SQL = """` is data, not prose, and a `/*` trailing real code opens nothing.
+
+## Vendored trees
+
+Skipped through both paths, since their comments are not yours to police and one `go mod vendor`
+or pod install would bury a real finding under thousands of them:
+
+| ecosystem | skipped |
+|---|---|
+| any | `vendor` `third_party` `thirdparty` `vendored` `.cache` |
+| JS/TS | `node_modules` `bower_components` `jspm_packages` `.yarn` `.pnp` `.next` `.nuxt` `.svelte-kit` `.parcel-cache` `.turbo` `.angular` |
+| Python | `.venv` `venv` `site-packages` `__pycache__` `.tox` `.nox` `.eggs` `.mypy_cache` `.pytest_cache` `.ruff_cache` |
+| Go / Ruby / PHP | `Godeps` `bundle` `.bundle` |
+| JVM | `build` `target` `.gradle` `.m2` `gradle` |
+| .NET | `obj` |
+| Apple | `Pods` `Carthage` `.build` `DerivedData` `.swiftpm` |
+| Elixir / Dart / Haskell / Terraform / CMake | `deps` `_build` `.dart_tool` `.pub-cache` `.stack-work` `dist-newstyle` `.terraform` `cmake-build-*` `_deps` |
+| output | `dist` `coverage` |
+
+Deliberately **absent**, because each is somebody's real source: `bin`, `env`, `external`, `lib`,
+`src`, `out`, and `packages` — a pnpm or lerna monorepo keeps its own code there.
+
+Matching is on whole path segments, so `src/vendored_helpers.py` is still your code. If a default
+*is* your source, `COMMENT_CRITIC_SKIP=-build` puts it back: a silent false negative cannot be
+noticed the way a false positive can.
+
+The `Bash` path needs a git repo and reports each block once — it stays in the diff until fixed
+or committed, and a warning that repeats on every command is noise.
 
 ## Install
 
@@ -46,7 +79,7 @@ never a wrong write.
 | `COMMENT_CRITIC_THRESHOLD` | `8` | Lines before a block is flagged. 8 is ~p80 of a real codebase's blocks. Measure your own: outliers by distribution beat outliers by taste. |
 | `COMMENT_CRITIC_HOME` | discovered | Override when the answer is two places, or a name nobody else uses. |
 | `COMMENT_CRITIC_SKILL` | discovered | Override when your skill is not named after the thing it files. |
-| `COMMENT_CRITIC_SKIP` | unset | Extra path segments to skip, comma separated, e.g. `Generated,legacy`. Added to the built-in list, never replacing it. |
+| `COMMENT_CRITIC_SKIP` | unset | Comma-separated path segments. `Generated,legacy` adds to the built-in list; `-build` removes a default. |
 
 ## The policy it enforces
 

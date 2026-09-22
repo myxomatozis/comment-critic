@@ -17,17 +17,54 @@ import sys
 
 _raw = os.environ.get("COMMENT_CRITIC_THRESHOLD", "")
 THRESHOLD = int(_raw) if _raw.isdigit() else 8
-#: Code you did not write and will not edit: dependencies, checked-in vendor trees, build output.
-#: Its comments are not yours to police, and a `go mod vendor` or a pod install would otherwise
-#: bury a real finding under thousands of them.
-VENDORED = {"node_modules", "vendor", "third_party", "thirdparty", "bower_components", "Pods",
-            "Carthage", "Godeps", ".venv", "venv", "site-packages", ".build", "build", "dist",
-            "target", ".next", ".nuxt", ".yarn", "bundle"}
+#: Code you did not write and will not edit: dependency trees, checked-in vendor directories and
+#: build output, per ecosystem. Their comments are not yours to police, and one `go mod vendor`
+#: or pod install would otherwise bury a real finding under thousands of them.
+#:
+#: Deliberately absent, because each is somebody's real source: `bin`, `env`, `external`,
+#: `packages` (a pnpm or lerna monorepo keeps its own code there), `lib`, `src`, `out`.
+VENDORED = {
+    # cross-ecosystem
+    "vendor", "third_party", "thirdparty", "vendored", ".cache",
+    # javascript / typescript
+    "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnp", ".next", ".nuxt",
+    ".svelte-kit", ".parcel-cache", ".turbo", ".angular",
+    # python
+    ".venv", "venv", "site-packages", "__pycache__", ".tox", ".nox", ".eggs", ".mypy_cache",
+    ".pytest_cache", ".ruff_cache",
+    # go
+    "Godeps",
+    # ruby / php
+    "bundle", ".bundle",
+    # jvm
+    "build", "target", ".gradle", ".m2", "gradle",
+    # .net
+    "obj",
+    # swift / apple
+    "Pods", "Carthage", ".build", "DerivedData", ".swiftpm",
+    # rust shares `target`; elixir, dart, haskell, terraform, cmake
+    "deps", "_build", ".dart_tool", ".pub-cache", ".stack-work", "dist-newstyle", ".terraform",
+    "cmake-build-debug", "cmake-build-release", "_deps",
+    # generic output
+    "dist", "coverage",
+}
 
 
 def vendored(path):
-    extra = {n.strip() for n in os.environ.get("COMMENT_CRITIC_SKIP", "").split(",") if n.strip()}
-    return any(part in VENDORED or part in extra for part in pathlib.PurePath(path).parts)
+    """True when the path lives in a dependency or build tree.
+
+    `COMMENT_CRITIC_SKIP` adds names; a name prefixed with `-` removes one, because a default
+    like `build` or `dist` is somebody's real source directory, and a silent false negative
+    cannot be noticed the way a false positive can.
+    """
+    skip, keep = set(VENDORED), set()
+    for name in os.environ.get("COMMENT_CRITIC_SKIP", "").split(","):
+        name = name.strip()
+        if name.startswith("-"):
+            keep.add(name[1:])
+        elif name:
+            skip.add(name)
+    return any(p in skip and p not in keep for p in pathlib.PurePath(path).parts)
 
 
 #: Conventional homes for a ruling, and the skills that file one. Looked up only to name them in
@@ -54,14 +91,56 @@ def destination(cwd):
             if skill:
                 break
     return home, skill
-COMMENT = re.compile(r"^\s*(//|///|#|\*(?!/))")
+#: Line-comment markers per language, never pooled: `#` opens a comment in Python and a
+#: preprocessor directive in C. Source extensions only, and a language is listed only once —
+#: a markdown heredoc is nearly all `#` headings and would fire on every document written,
+#: which is how a hook gets switched off.
+_SLASH = ("//",)
+LINE = dict.fromkeys(
+    (".swift", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".java", ".kt", ".kts", ".c", ".h",
+     ".cpp", ".hpp", ".cc", ".m", ".mm", ".go", ".rs", ".cs", ".scala", ".dart", ".php", ".zig",
+     ".groovy", ".proto", ".gradle"), _SLASH)
+LINE.update(dict.fromkeys(
+    (".py", ".rb", ".sh", ".bash", ".zsh", ".fish", ".pl", ".pm", ".r", ".jl", ".nim", ".cr",
+     ".ex", ".exs", ".tf", ".yaml", ".yml", ".toml"), ("#",)))
+LINE.update(dict.fromkeys((".sql", ".hs", ".lua", ".elm", ".adb", ".ads"), ("--",)))
+LINE.update(dict.fromkeys((".lisp", ".clj", ".cljs", ".el", ".scm", ".asm"), (";",)))
+LINE.update(dict.fromkeys((".tex", ".erl", ".hrl"), ("%",)))
+LINE[".f90"] = ("!",)
+
+#: Block comments as (open, close), counted only when the opener starts the line — so a long SQL
+#: string assigned in Python, or a `/*` trailing real code, is not read as prose.
+_C_BLOCK = (("/*", "*/"),)
+BLOCK = dict.fromkeys([e for e, m in LINE.items() if m is _SLASH], _C_BLOCK)
+BLOCK[".py"] = (('"""', '"""'), ("\'\'\'", "\'\'\'"))
+BLOCK[".lua"] = (("--[[", "]]"),)
+BLOCK[".hs"] = (("{-", "-}"),)
+
+SOURCE = tuple(LINE)
 
 
-def runs(text):
+def markers(path):
+    ext = pathlib.PurePath(path).suffix.lower()
+    return LINE.get(ext, ()), BLOCK.get(ext, ())
+
+
+def runs(text, path):
     """Yield (start_line, length) for each comment block longer than THRESHOLD."""
+    line_marks, blocks = markers(path)
     start = length = 0
-    for n, line in enumerate(text.split("\n"), 1):
-        if COMMENT.match(line):
+    closing = None
+    for n, raw in enumerate(text.split("\n"), 1):
+        line = raw.strip()
+        if closing:
+            comment = True
+            if closing in line:
+                closing = None
+        else:
+            opener = next(((o, c) for o, c in blocks if line.startswith(o)), None)
+            comment = bool(opener) or any(line.startswith(m) for m in line_marks)
+            if opener and opener[1] not in line[len(opener[0]):]:
+                closing = opener[1]
+        if comment:
             if not length:
                 start = n
             length += 1
@@ -71,12 +150,6 @@ def runs(text):
             length = 0
     if length > THRESHOLD:
         yield start, length
-
-
-#: Source extensions only. A markdown heredoc is nearly all `#` headings and would fire on every
-#: document written, which is how a hook gets switched off.
-SOURCE = (".swift", ".py", ".sh", ".rb", ".js", ".ts", ".tsx", ".java", ".kt",
-          ".c", ".h", ".cpp", ".m", ".mm", ".go", ".rs")
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)")
 
 
@@ -105,14 +178,14 @@ def bash_added(cwd):
                 body = (pathlib.Path(cwd) / name).read_text(errors="replace")
             except OSError:
                 continue
-            for start, length in runs(body):
+            for start, length in runs(body, name):
                 yield name, start, length
 
     path, base, added = None, 0, []
     for line in diff.stdout.split("\n") + ["diff --git "]:
         if line.startswith(("diff --git ", "@@ ")):
             if path and added:
-                for s, n in runs("\n".join(added)):
+                for s, n in runs("\n".join(added), path):
                     yield path, base + s - 1, n
             added = []
             hunk = _HUNK.match(line)
@@ -171,7 +244,7 @@ def main():
         path = tool_input.get("file_path", "?")
         if not path.endswith(SOURCE) or vendored(path):
             return 0
-        hits = [(path, s, n) for s, n in runs(written(tool, tool_input))]
+        hits = [(path, s, n) for s, n in runs(written(tool, tool_input), path)]
     if not hits:
         return 0
 
