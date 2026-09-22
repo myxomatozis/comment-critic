@@ -1,6 +1,6 @@
 {
   "name": "comment-critic",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Flags comment blocks long enough to need justifying, and asks the three questions",
   "author": { "name": "Oleh Smirnov", "email": "oleh.smirnov@icloud.com" },
   "license": "MIT",
