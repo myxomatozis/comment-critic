@@ -11,6 +11,13 @@ payload; for `Bash` the hook asks `git` what actually changed, so a heredoc, `se
 one-liner, a generator script and a brand-new untracked file are all caught the same way. Parsing
 the command to guess which of those wrote what is unwinnable — there is always another `etc.`
 
+Vendored trees are skipped through both paths — `node_modules`, `vendor`, `third_party`,
+`bower_components`, `Pods`, `Carthage`, `Godeps`, `.venv`, `venv`, `site-packages`, `.build`,
+`build`, `dist`, `target`, `.next`, `.nuxt`, `.yarn`, `bundle`. Their comments are not yours to
+police, and one `go mod vendor` or pod install would otherwise bury a real finding under
+thousands of them. Matching is on whole path segments, so `src/vendored_helpers.py` is still
+your code.
+
 Source extensions only: a markdown heredoc is nearly all `#` headings and would fire on every
 document written, which is how a hook gets switched off. The `Bash` path needs a git repo and
 reports each block once — it stays in the diff until fixed or committed, and a warning that
@@ -39,6 +46,7 @@ never a wrong write.
 | `COMMENT_CRITIC_THRESHOLD` | `8` | Lines before a block is flagged. 8 is ~p80 of a real codebase's blocks. Measure your own: outliers by distribution beat outliers by taste. |
 | `COMMENT_CRITIC_HOME` | discovered | Override when the answer is two places, or a name nobody else uses. |
 | `COMMENT_CRITIC_SKILL` | discovered | Override when your skill is not named after the thing it files. |
+| `COMMENT_CRITIC_SKIP` | unset | Extra path segments to skip, comma separated, e.g. `Generated,legacy`. Added to the built-in list, never replacing it. |
 
 ## The policy it enforces
 

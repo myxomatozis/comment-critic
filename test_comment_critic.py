@@ -86,6 +86,27 @@ code, err = run({"tool_name": "Write", "cwd": empty,
                  "tool_input": {"file_path": "a.swift", "content": long_block}}, nowhere)
 assert code == 2 and "skill" not in err, "no skill found, no skill sentence"
 
+# Vendored trees are not yours to police, through either path.
+for junk in ("node_modules/left-pad/index.js", "Pods/Alamofire/Source/A.swift",
+             "vendor/github.com/x/y.go", "deep/nested/third_party/z/a.py",
+             "build/generated/G.java", ".venv/lib/site-packages/q.py"):
+    code, _ = run({"tool_name": "Write", "tool_input": {"file_path": junk, "content": long_block}})
+    assert code == 0, f"{junk} must be skipped"
+
+# A path merely containing the word is still policed: only whole segments count.
+code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "src/vendored_helpers.py",
+                                                    "content": long_block}})
+assert code == 2, "vendored_helpers.py is your code"
+
+# COMMENT_CRITIC_SKIP adds to the list without replacing it.
+env = dict(os.environ, COMMENT_CRITIC_SKIP="Generated, legacy")
+code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "app/Generated/API.swift",
+                                                    "content": long_block}}, env)
+assert code == 0, "an added name must be skipped"
+code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "node_modules/a/b.js",
+                                                    "content": long_block}}, env)
+assert code == 0, "the defaults must survive an addition"
+
 # --- Bash writes, however they land -------------------------------------------
 repo = tempfile.mkdtemp()
 subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
@@ -105,6 +126,10 @@ mechanisms = {
     "sed -i":       "sed -i '' 's|let x = 1|" + "\\n".join(f"// s{i}" for i in range(12)) + "|' a.swift",
     "nested dir":   f"mkdir -p sub && cat > sub/b.swift <<'EOF'\n{long_block}\nEOF",
 }
+skipped = {
+    "new vendored file":     f"mkdir -p node_modules/x && cat > node_modules/x/i.js <<'EOF'\n{long_block}\nEOF",
+    "tracked vendor change": f"cat > vendor/v.swift <<'EOF'\n{long_block}\nEOF",
+}
 def reset():
     subprocess.run(["git", "checkout", "-q", "--", "."], cwd=repo)
     subprocess.run(["git", "clean", "-fdq"], cwd=repo)
@@ -117,6 +142,18 @@ for name, cmd in mechanisms.items():
     code, err = run({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": repo})
     assert code == 2, f"{name} did not fire"
     assert ".swift" in err, f"{name} named no file: {err}"
+
+# The same two, vendored: git sees them, the guard does not.
+subprocess.run(["mkdir", "-p", "vendor"], cwd=repo, check=True)
+(pathlib.Path(repo) / "vendor" / "v.swift").write_text("let v = 1\n")
+subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "vendor"],
+               cwd=repo, check=True)
+for name, cmd in skipped.items():
+    reset()
+    subprocess.run(cmd, cwd=repo, shell=True, check=True, capture_output=True)
+    code, err = run({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": repo})
+    assert code == 0, f"{name} should be skipped, got: {err}"
 
 # A markdown write through Bash still must not fire.
 reset()

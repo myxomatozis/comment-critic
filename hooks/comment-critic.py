@@ -17,6 +17,19 @@ import sys
 
 _raw = os.environ.get("COMMENT_CRITIC_THRESHOLD", "")
 THRESHOLD = int(_raw) if _raw.isdigit() else 8
+#: Code you did not write and will not edit: dependencies, checked-in vendor trees, build output.
+#: Its comments are not yours to police, and a `go mod vendor` or a pod install would otherwise
+#: bury a real finding under thousands of them.
+VENDORED = {"node_modules", "vendor", "third_party", "thirdparty", "bower_components", "Pods",
+            "Carthage", "Godeps", ".venv", "venv", "site-packages", ".build", "build", "dist",
+            "target", ".next", ".nuxt", ".yarn", "bundle"}
+
+
+def vendored(path):
+    extra = {n.strip() for n in os.environ.get("COMMENT_CRITIC_SKIP", "").split(",") if n.strip()}
+    return any(part in VENDORED or part in extra for part in pathlib.PurePath(path).parts)
+
+
 #: Conventional homes for a ruling, and the skills that file one. Looked up only to name them in
 #: the message, so a wrong guess costs a misleading sentence, never a wrong write.
 HOMES = ("docs/backlog", "docs/decisions", "docs/adr", "docs/rulings", "doc/adr", "adr", "docs")
@@ -87,7 +100,7 @@ def bash_added(cwd):
 
     # A file git has never seen has no diff — every line of it is new.
     for name in new.stdout.split("\n"):
-        if name.endswith(SOURCE):
+        if name.endswith(SOURCE) and not vendored(name):
             try:
                 body = (pathlib.Path(cwd) / name).read_text(errors="replace")
             except OSError:
@@ -107,7 +120,7 @@ def bash_added(cwd):
                 base = int(hunk.group(1))
         elif line.startswith("+++ b/"):
             target = line[6:]
-            path = target if target.endswith(SOURCE) else None
+            path = target if target.endswith(SOURCE) and not vendored(target) else None
         elif line.startswith("+") and path:
             added.append(line[1:])
 
@@ -156,7 +169,7 @@ def main():
         hits = unseen(list(bash_added(cwd)), cwd)
     else:
         path = tool_input.get("file_path", "?")
-        if not path.endswith(SOURCE):
+        if not path.endswith(SOURCE) or vendored(path):
             return 0
         hits = [(path, s, n) for s, n in runs(written(tool, tool_input))]
     if not hits:
