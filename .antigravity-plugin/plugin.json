@@ -1,0 +1,5 @@
+{
+  "name": "comment-critic",
+  "version": "0.7.1",
+  "description": "Flags comment blocks long enough to need justifying, and asks the three questions"
+}

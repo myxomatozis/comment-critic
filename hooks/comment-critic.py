@@ -258,18 +258,66 @@ def unseen(hits, cwd):
     return fresh
 
 
+def from_antigravity(payload):
+    """Translate an Antigravity hook payload into the Claude Code shape main() reads.
+
+    Antigravity runs hooks from the plugin directory, so the workspace comes from the payload.
+    """
+    call = payload["toolCall"]
+    args = call.get("args") or {}
+    name = call.get("name", "")
+    cwd = args.get("Cwd") or next(iter(payload.get("workspacePaths") or []), "") or os.getcwd()
+    path = args.get("TargetFile", "?")
+    if name == "write_to_file":
+        return "Write", {"file_path": path, "content": args.get("CodeContent", "")}, cwd
+    if name == "replace_file_content":
+        return "Edit", {"file_path": path, "new_string": args.get("ReplacementContent", "")}, cwd
+    if name == "multi_replace_file_content":
+        edits = [{"new_string": c.get("ReplacementContent", "")}
+                 for c in args.get("ReplacementChunks") or []]
+        return "MultiEdit", {"file_path": path, "edits": edits}, cwd
+    if name == "run_command":
+        return "Bash", {}, cwd
+    return name, {}, cwd
+
+
+def queue(payload):
+    return pathlib.Path(tempfile.gettempdir()) / f"comment-critic-{payload.get('conversationId', '')}"
+
+
+def inject(payload):
+    """PreInvocation: hand the model whatever PostToolUse queued, since PostToolUse cannot."""
+    q = queue(payload)
+    try:
+        msg = q.read_text()
+        q.unlink()
+    except OSError:
+        msg = ""
+    print(json.dumps({"injectSteps": [{"ephemeralMessage": msg}]} if msg else {}))
+    return 0
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
     except Exception:
-        return 0
+        payload = {}
 
-    tool = payload.get("tool_name", "")
+    agy = "conversationId" in payload
+    if agy and "--inject" in sys.argv:
+        return inject(payload)
+    if agy:
+        print("{}")
+        if "toolCall" not in payload:
+            return 0
+        tool, tool_input, cwd = from_antigravity(payload)
+    else:
+        tool = payload.get("tool_name", "")
+        tool_input = payload.get("tool_input", {})
+        cwd = payload.get("cwd") or os.getcwd()
     if tool not in {"Write", "Edit", "MultiEdit", "Bash"}:
         return 0
 
-    tool_input = payload.get("tool_input", {})
-    cwd = payload.get("cwd") or os.getcwd()
     if tool == "Bash":
         hits = unseen(list(bash_added(cwd)), cwd)
     else:
@@ -284,15 +332,22 @@ def main():
     found = [(s, n) for _, s, n in hits]
     path = ", ".join(dict.fromkeys(h[0] for h in hits))
     where = ", ".join(f"~line {s} ({n} lines)" for s, n in found[:3])
-    print(
+    msg = (
         f"Comment block over {THRESHOLD} lines in {path}: {where}.\n"
         "Three questions: is it needed? will it change what someone does? "
         "can it be shorter?\n"
         "Comment why, not what. If the explanation is longer than the code, cut the explanation. "
         f"A ruling or a measurement belongs in {home} — link, don't restate."
-        + (f" Record it with the `{skill}` skill; do not hand-roll the file." if skill else ""),
-        file=sys.stderr,
+        + (f" Record it with the `{skill}` skill; do not hand-roll the file." if skill else "")
     )
+    if agy:
+        try:
+            with queue(payload).open("a") as q:
+                q.write(msg + "\n")
+        except OSError:
+            pass
+        return 0
+    print(msg, file=sys.stderr)
     return 2
 
 
