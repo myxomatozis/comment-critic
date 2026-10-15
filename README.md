@@ -81,6 +81,15 @@ or committed, and a warning that repeats on every command is noise.
 /plugin install comment-critic@comment-critic
 ```
 
+Antigravity:
+
+```
+agy plugin install https://github.com/myxomatozis/comment-critic
+```
+
+Antigravity has no PostToolUse feedback channel, so the finding is queued and handed to the
+model by a `PreInvocation` hook before its next call.
+
 ## Tune — but you should not have to
 
 Install it and it works. A ruling has to be relocated *somewhere*, so the hook looks for that
