@@ -115,7 +115,8 @@ def destination(cwd):
     if not home:
         home = next((f"{n}/" for n in HOMES if (root / n).is_dir()), "a doc")
     if not skill:
-        for base in (root / ".claude" / "skills", pathlib.Path.home() / ".claude" / "skills"):
+        for base in (root / ".claude" / "skills", pathlib.Path.home() / ".claude" / "skills",
+                     root / ".kiro" / "skills", pathlib.Path.home() / ".kiro" / "skills"):
             skill = next((n for n in SKILLS if (base / n).is_dir()), "")
             if skill:
                 break
@@ -281,18 +282,44 @@ def from_antigravity(payload):
     return name, {}, cwd
 
 
+def from_kiro(payload):
+    """Translate a Kiro CLI hook payload into the Claude Code shape main() reads."""
+    args = payload.get("tool_input") or {}
+    name = payload.get("tool_name", "")
+    cwd = payload.get("cwd") or os.getcwd()
+    path = args.get("path", "?")
+    if name == "fs_write":
+        return "Write", {"file_path": path, "content": args.get("text", "")}, cwd
+    if name == "fs_append":
+        return "Edit", {"file_path": path, "new_string": args.get("text", "")}, cwd
+    if name == "str_replace":
+        return "Edit", {"file_path": path, "new_string": args.get("newStr", "")}, cwd
+    if name == "execute_bash":
+        return "Bash", {}, args.get("cwd") or cwd
+    return name, {}, cwd
+
+
 def queue(payload):
-    return pathlib.Path(tempfile.gettempdir()) / f"comment-critic-{payload.get('conversationId', '')}"
+    key = payload.get("conversationId") or payload.get("session_id", "")
+    return pathlib.Path(tempfile.gettempdir()) / f"comment-critic-{key}"
 
 
-def inject(payload):
-    """PreInvocation: hand the model whatever PostToolUse queued, since PostToolUse cannot."""
+def inject(payload, kiro=False):
+    """Hand the model whatever PostToolUse queued, since PostToolUse cannot.
+
+    Antigravity runs this on PreInvocation. Kiro runs it on Stop, whose block reason is the
+    only hook output that reaches the model; draining the queue lets the next stop through.
+    """
     q = queue(payload)
     try:
         msg = q.read_text()
         q.unlink()
     except OSError:
         msg = ""
+    if kiro:
+        if msg:
+            print(json.dumps({"decision": "block", "reason": msg}))
+        return 0
     print(json.dumps({"injectSteps": [{"ephemeralMessage": msg}]} if msg else {}))
     return 0
 
@@ -304,13 +331,16 @@ def main():
         payload = {}
 
     agy = "conversationId" in payload
-    if agy and "--inject" in sys.argv:
-        return inject(payload)
+    kiro = "--kiro" in sys.argv
+    if (agy or kiro) and "--inject" in sys.argv:
+        return inject(payload, kiro)
     if agy:
         print("{}")
         if "toolCall" not in payload:
             return 0
         tool, tool_input, cwd = from_antigravity(payload)
+    elif kiro:
+        tool, tool_input, cwd = from_kiro(payload)
     else:
         tool = payload.get("tool_name", "")
         tool_input = payload.get("tool_input", {})
@@ -340,7 +370,7 @@ def main():
         f"A ruling or a measurement belongs in {home} — link, don't restate."
         + (f" Record it with the `{skill}` skill; do not hand-roll the file." if skill else "")
     )
-    if agy:
+    if agy or kiro:
         try:
             with queue(payload).open("a") as q:
                 q.write(msg + "\n")

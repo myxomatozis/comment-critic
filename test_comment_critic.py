@@ -311,4 +311,25 @@ agy({**conv, "toolCall": {"name": "multi_replace_file_content", "args": {"Target
 steps = agy(conv, "--inject")["injectSteps"]
 assert "12 lines" in steps[0]["ephemeralMessage"], steps
 assert agy(conv, "--inject") == {}, "injected findings must be drained"
+
+# --- Kiro: PostToolUse queues, Stop blocks once with the findings ---------------
+def kiro(payload, *args):
+    p = subprocess.run([sys.executable, HOOK, "--kiro", *args], input=json.dumps(payload),
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout) if p.stdout.strip() else None
+
+sess = {"session_id": "test-kiro", "cwd": tempfile.mkdtemp()}
+kiro(sess, "--inject")  # drain leftovers
+assert kiro({**sess, "tool_name": "fs_write",
+             "tool_input": {"path": "/x/a.swift", "text": short_block}}) is None
+assert kiro(sess, "--inject") is None, "short block must queue nothing"
+kiro({**sess, "tool_name": "str_replace",
+      "tool_input": {"path": "/x/a.ts", "oldStr": "x", "newStr": long_block}})
+kiro({**sess, "tool_name": "fs_write", "tool_input": {"path": "/x/README.md", "text": long_block}})
+stop = kiro(sess, "--inject")
+assert stop["decision"] == "block" and "/x/a.ts: ~line 1 (12 lines)" in stop["reason"], stop
+assert "README" not in stop["reason"], "markdown must not fire"
+assert kiro(sess, "--inject") is None, "a drained queue must let the next stop through"
+assert kiro({**sess, "tool_name": "read_file", "tool_input": {"path": "/x/a.ts"}}) is None
 print("ok")

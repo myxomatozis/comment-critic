@@ -1,0 +1,28 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "comment-critic",
+      "description": "Advisory PostToolUse check on comment block length",
+      "trigger": "PostToolUse",
+      "matcher": "write",
+      "action": { "type": "command", "command": "python3 ~/.kiro/comment-critic/hooks/comment-critic.py --kiro" },
+      "timeout": 5
+    },
+    {
+      "name": "comment-critic-bash",
+      "description": "Advisory PostToolUse check on comment block length",
+      "trigger": "PostToolUse",
+      "matcher": "shell",
+      "action": { "type": "command", "command": "python3 ~/.kiro/comment-critic/hooks/comment-critic.py --kiro" },
+      "timeout": 5
+    },
+    {
+      "name": "comment-critic-report",
+      "description": "Hands queued comment-critic findings to the model before the turn ends",
+      "trigger": "Stop",
+      "action": { "type": "command", "command": "python3 ~/.kiro/comment-critic/hooks/comment-critic.py --kiro --inject" },
+      "timeout": 5
+    }
+  ]
+}
