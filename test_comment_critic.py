@@ -471,4 +471,15 @@ assert stop["decision"] == "block" and "/x/a.ts:1 (24 lines)" in stop["reason"],
 assert "README" not in stop["reason"], "markdown must not fire"
 assert kiro(sess, "--inject") is None, "a drained queue must let the next stop through"
 assert kiro({**sess, "tool_name": "read_file", "tool_input": {"path": "/x/a.ts"}}) is None
+
+# --- the policy, up front, in each platform's own shape --------------------------
+# Kiro adds SessionStart stdout to context as text; Antigravity reads injectSteps. Each may
+# also send hook_event_name, which must not divert it into Claude Code's JSON.
+for payload in ({}, {"hook_event_name": "SessionStart", "session_id": "k"}):
+    p = subprocess.run([sys.executable, HOOK, "--kiro", "--policy"], input=json.dumps(payload),
+                       capture_output=True, text=True)
+    assert p.returncode == 0 and p.stdout.startswith("## Comment policy"), p.stdout
+for payload in ({"conversationId": "c"}, {"conversationId": "c", "hook_event_name": "SessionStart"}):
+    step = agy(payload, "--policy")["injectSteps"][0]
+    assert "three questions" in step["systemMessage"], step
 print("ok")

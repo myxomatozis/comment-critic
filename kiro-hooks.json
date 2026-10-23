@@ -2,6 +2,13 @@
   "version": "v1",
   "hooks": [
     {
+      "name": "comment-critic-policy",
+      "description": "Hands the model the comment policy when a session starts",
+      "trigger": "SessionStart",
+      "action": { "type": "command", "command": "python3 ~/.kiro/comment-critic/hooks/comment-critic.py --kiro --policy" },
+      "timeout": 5
+    },
+    {
       "name": "comment-critic",
       "description": "Notes new comments that fail the comment policy",
       "trigger": "PostToolUse",

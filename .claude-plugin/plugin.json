@@ -1,6 +1,6 @@
 {
   "name": "comment-critic",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Hands the model a comment policy, then, once per turn, quotes each new comment that narrates, restates, is dead code or outweighs its code, and asks the three questions",
   "author": { "name": "Oleh Smirnov", "email": "oleh.smirnov@icloud.com" },
   "license": "MIT",

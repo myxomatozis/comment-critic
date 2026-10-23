@@ -128,7 +128,7 @@ mkdir -p ~/.kiro/hooks && cp ~/.kiro/comment-critic/kiro-hooks.json ~/.kiro/hook
 Kiro ignores PostToolUse output too, so findings are queued and handed over by a `Stop` hook:
 the turn gets one more round to answer the three questions, then ends normally.
 
-On both, the policy below is not injected up front — paste it into the project's rules.
+On both, a `SessionStart` hook hands over the policy below, as on Claude Code.
 
 ## Tune — but you should not have to
 

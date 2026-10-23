@@ -507,13 +507,17 @@ def main():
     except Exception:
         payload = {}
 
+    agy = "conversationId" in payload
+    kiro = "--kiro" in sys.argv
+    # The flag, not the payload, picks the platform: either may also name its event SessionStart.
+    if "--policy" in sys.argv:
+        print(POLICY if kiro else json.dumps({"injectSteps": [{"systemMessage": POLICY}]}))
+        return 0
     event = payload.get("hook_event_name", "")
     if event in ("SessionStart", "SubagentStart"):
         print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
                                                  "additionalContext": POLICY}}))
         return 0
-    agy = "conversationId" in payload
-    kiro = "--kiro" in sys.argv
     if (agy or kiro) and "--inject" in sys.argv:
         return inject(payload, kiro)
     if event in ("Stop", "SubagentStop"):

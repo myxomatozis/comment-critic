@@ -1,5 +1,8 @@
 {
   "comment-critic": {
+    "SessionStart": [
+      { "type": "command", "command": "python3 hooks/comment-critic.py --policy", "timeout": 5 }
+    ],
     "PostToolUse": [
       {
         "matcher": "write_to_file|replace_file_content|multi_replace_file_content|run_command",

@@ -1,5 +1,5 @@
 {
   "name": "comment-critic",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Quotes each new comment that narrates, restates, is dead code or outweighs its code, and asks the three questions"
 }
