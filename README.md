@@ -109,6 +109,27 @@ or committed, and a warning that repeats on every command is noise.
 /plugin install comment-critic@comment-critic
 ```
 
+Antigravity:
+
+```
+agy plugin install https://github.com/myxomatozis/comment-critic
+```
+
+Antigravity has no PostToolUse feedback channel, so the finding is queued and handed to the
+model by a `PreInvocation` hook before its next call.
+
+Kiro CLI (V3 engine):
+
+```
+git clone https://github.com/myxomatozis/comment-critic ~/.kiro/comment-critic
+mkdir -p ~/.kiro/hooks && cp ~/.kiro/comment-critic/kiro-hooks.json ~/.kiro/hooks/comment-critic.json
+```
+
+Kiro ignores PostToolUse output too, so findings are queued and handed over by a `Stop` hook:
+the turn gets one more round to answer the three questions, then ends normally.
+
+On both, the policy below is not injected up front — paste it into the project's rules.
+
 ## Tune — but you should not have to
 
 Install it and it works. A ruling has to be relocated *somewhere*, so the hook looks for that

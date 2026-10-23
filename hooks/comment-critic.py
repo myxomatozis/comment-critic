@@ -122,7 +122,8 @@ def destination(cwd):
     if not home:
         home = next((f"{n}/" for n in HOMES if (root / n).is_dir()), "a doc")
     if not skill:
-        for base in (root / ".claude" / "skills", pathlib.Path.home() / ".claude" / "skills"):
+        for base in (root / ".claude" / "skills", pathlib.Path.home() / ".claude" / "skills",
+                     root / ".kiro" / "skills", pathlib.Path.home() / ".kiro" / "skills"):
             skill = next((n for n in SKILLS if (base / n).is_dir()), "")
             if skill:
                 break
@@ -374,7 +375,8 @@ def unseen(hits, cwd):
 def pending(payload):
     """Where this session's findings wait for the end of the turn. A subagent gets its own,
     so it answers for its comments rather than leaving them to the parent."""
-    key = re.sub(r"\W", "", f"{payload.get('session_id', '')}-{payload.get('agent_id', '')}")
+    session = payload.get("conversationId") or payload.get("session_id", "")
+    key = re.sub(r"\W", "", f"{session}-{payload.get('agent_id', '')}")
     return pathlib.Path(tempfile.gettempdir()) / f"comment-critic-{key}.jsonl"
 
 
@@ -442,17 +444,78 @@ def report(hits, cwd):
         + (f" Record it with the `{skill}` skill; do not hand-roll the file." if skill else ""))
 
 
+def from_antigravity(payload):
+    """Translate an Antigravity hook payload into the Claude Code shape main() reads.
+
+    Antigravity runs hooks from the plugin directory, so the workspace comes from the payload.
+    """
+    call = payload["toolCall"]
+    args = call.get("args") or {}
+    name = call.get("name", "")
+    cwd = args.get("Cwd") or next(iter(payload.get("workspacePaths") or []), "") or os.getcwd()
+    path = args.get("TargetFile", "?")
+    if name == "write_to_file":
+        return "Write", {"file_path": path, "content": args.get("CodeContent", "")}, cwd
+    if name == "replace_file_content":
+        return "Edit", {"file_path": path, "new_string": args.get("ReplacementContent", "")}, cwd
+    if name == "multi_replace_file_content":
+        edits = [{"new_string": c.get("ReplacementContent", "")}
+                 for c in args.get("ReplacementChunks") or []]
+        return "MultiEdit", {"file_path": path, "edits": edits}, cwd
+    if name == "run_command":
+        return "Bash", {}, cwd
+    return name, {}, cwd
+
+
+def from_kiro(payload):
+    """Translate a Kiro CLI hook payload into the Claude Code shape main() reads."""
+    args = payload.get("tool_input") or {}
+    name = payload.get("tool_name", "")
+    cwd = payload.get("cwd") or os.getcwd()
+    path = args.get("path", "?")
+    if name == "fs_write":
+        return "Write", {"file_path": path, "content": args.get("text", "")}, cwd
+    if name == "fs_append":
+        return "Edit", {"file_path": path, "new_string": args.get("text", "")}, cwd
+    if name == "str_replace":
+        return "Edit", {"file_path": path, "new_string": args.get("newStr", "")}, cwd
+    if name == "execute_bash":
+        return "Bash", {}, args.get("cwd") or cwd
+    return name, {}, cwd
+
+
+def inject(payload, kiro=False):
+    """Hand the model the review where PostToolUse output cannot reach it.
+
+    Antigravity runs this on PreInvocation. Kiro runs it on Stop, whose block reason is the
+    only hook output that reaches the model; a spent review lets the next stop through.
+    """
+    cwd = payload.get("cwd") or next(iter(payload.get("workspacePaths") or []), "") or os.getcwd()
+    hits = review(payload)
+    msg = report(hits, cwd) if hits else ""
+    if kiro:
+        if msg:
+            print(json.dumps({"decision": "block", "reason": msg}))
+        return 0
+    print(json.dumps({"injectSteps": [{"ephemeralMessage": msg}]} if msg else {}))
+    return 0
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
     except Exception:
-        return 0
+        payload = {}
 
     event = payload.get("hook_event_name", "")
     if event in ("SessionStart", "SubagentStart"):
         print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
                                                  "additionalContext": POLICY}}))
         return 0
+    agy = "conversationId" in payload
+    kiro = "--kiro" in sys.argv
+    if (agy or kiro) and "--inject" in sys.argv:
+        return inject(payload, kiro)
     if event in ("Stop", "SubagentStop"):
         hits = review(payload)
         if hits:
@@ -460,12 +523,20 @@ def main():
             return 2
         return 0
 
-    tool = payload.get("tool_name", "")
+    if agy:
+        print("{}")
+        if "toolCall" not in payload:
+            return 0
+        tool, tool_input, cwd = from_antigravity(payload)
+    elif kiro:
+        tool, tool_input, cwd = from_kiro(payload)
+    else:
+        tool = payload.get("tool_name", "")
+        tool_input = payload.get("tool_input", {})
+        cwd = payload.get("cwd") or os.getcwd()
     if tool not in {"Write", "Edit", "MultiEdit", "Bash"}:
         return 0
 
-    tool_input = payload.get("tool_input", {})
-    cwd = payload.get("cwd") or os.getcwd()
     if tool == "Bash":
         found = [(p, *f) for p, text, changed in bash_changed(cwd)
                  for f in findings(text, p, changed)]

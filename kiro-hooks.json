@@ -1,0 +1,28 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "comment-critic",
+      "description": "Notes new comments that fail the comment policy",
+      "trigger": "PostToolUse",
+      "matcher": "write",
+      "action": { "type": "command", "command": "python3 ~/.kiro/comment-critic/hooks/comment-critic.py --kiro" },
+      "timeout": 5
+    },
+    {
+      "name": "comment-critic-bash",
+      "description": "Notes new comments that fail the comment policy",
+      "trigger": "PostToolUse",
+      "matcher": "shell",
+      "action": { "type": "command", "command": "python3 ~/.kiro/comment-critic/hooks/comment-critic.py --kiro" },
+      "timeout": 5
+    },
+    {
+      "name": "comment-critic-report",
+      "description": "Hands the turn's comment review to the model before it ends",
+      "trigger": "Stop",
+      "action": { "type": "command", "command": "python3 ~/.kiro/comment-critic/hooks/comment-critic.py --kiro --inject" },
+      "timeout": 5
+    }
+  ]
+}
