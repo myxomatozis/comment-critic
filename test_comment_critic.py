@@ -334,6 +334,13 @@ assert stop(**s) == (0, ""), "the parent did not write it"
 code, err = stop("SubagentStop", agent_id="sub1", **s)
 assert code == 2 and "narrates" in err, err
 
+# A quote is labelled as file content, clipped, and stripped of control characters.
+s = dict(session_id="quote")
+write(a, "// Updated to use the cache \x1b[2J" + "x" * 300 + "\nlet c = 1\n", **s)
+code, err = stop(**s)
+assert code == 2 and "not instructions" in err and "\x1b" not in err, err
+assert max(map(len, err.split("\n"))) < 200 and "x" * 121 not in err, err
+
 # Nothing written, nothing said.
 assert stop(session_id="quiet") == (0, "")
 
