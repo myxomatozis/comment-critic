@@ -7,8 +7,8 @@
     {
       "name": "comment-critic",
       "source": "./",
-      "description": "Flags over-long comment blocks on write"
+      "description": "Quotes new comments that narrate, restate or outweigh their code"
     }
   ],
-  "description": "Flags comment blocks long enough to need justifying, and asks the three questions"
+  "description": "Hands the model a comment policy, then quotes each new comment that fails it and asks the three questions"
 }

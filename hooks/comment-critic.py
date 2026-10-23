@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-"""PostToolUse hook: flag comment blocks long enough to need justifying.
-
-Default threshold is 8 lines — roughly p80 of a real codebase's comment blocks, so it fires on
-outliers by distribution rather than by taste. Set COMMENT_CRITIC_THRESHOLD to retune it against
-your own. Where a ruling belongs, and the skill that files it, are discovered from the repo;
-COMMENT_CRITIC_HOME and COMMENT_CRITIC_SKILL override that.
-Advisory: the edit already happened. It asks the three questions; it cannot answer them.
+"""SessionStart/SubagentStart: hand over the comment policy. PostToolUse: note each new comment
+that fails it. Stop/SubagentStop: quote what survived the turn, with the code under it, and ask
+the three questions once. Advisory — the model judges.
 """
 import json
 import os
@@ -16,7 +12,18 @@ import tempfile
 import sys
 
 _raw = os.environ.get("COMMENT_CRITIC_THRESHOLD", "")
-THRESHOLD = int(_raw) if _raw.isdigit() else 8
+THRESHOLD = int(_raw) if _raw.isdigit() else 20
+
+POLICY = """## Comment policy — comment as little as possible
+
+Every comment must survive three questions: is it needed, will it change what someone does,
+can it be shorter? Default to none.
+
+- Comment why, never what. The code says what.
+- Never narrate the change ("updated to use X", "previously Y"). The diff and commit say that.
+- No commented-out code. Git keeps the old version.
+- If the explanation is longer than the code it explains, delete the explanation.
+- A ruling, a measurement or a history belongs in a doc. Link to it; don't restate it."""
 #: Code you did not write and will not edit: dependency trees, checked-in vendor directories and
 #: build output, per ecosystem. Their comments are not yours to police, and one `go mod vendor`
 #: or pod install would otherwise bury a real finding under thousands of them.
@@ -153,11 +160,10 @@ def markers(path):
     return LINE.get(ext, ()), BLOCK.get(ext, ())
 
 
-def runs(text, path):
-    """Yield (start_line, length) for each comment block longer than THRESHOLD."""
-    line_marks, blocks = markers(path)
-    start = length = 0
-    closing = None
+def blocks(text, path):
+    """Yield (start_line, lines) for every comment block."""
+    line_marks, openers = markers(path)
+    start, lines, closing = 0, [], None
     for n, raw in enumerate(text.split("\n"), 1):
         line = raw.strip()
         if closing:
@@ -165,25 +171,111 @@ def runs(text, path):
             if closing in line:
                 closing = None
         else:
-            opener = next(((o, c) for o, c in blocks if line.startswith(o)), None)
+            opener = next(((o, c) for o, c in openers if line.startswith(o)), None)
             comment = bool(opener) or any(line.startswith(m) for m in line_marks)
             if opener and opener[1] not in line[len(opener[0]):]:
                 closing = opener[1]
         if comment:
-            if not length:
+            if not lines:
                 start = n
-            length += 1
+            lines.append(raw)
+        elif lines:
+            yield start, lines
+            lines = []
+    if lines:
+        yield start, lines
+
+
+# ponytail: word lists, not a parser. Widen from real misses, narrow from real false alarms.
+#: Comments about the edit rather than the code. Each needs the shape of a change log —
+#: "Added items are flushed" and "the previously selected row" are ordinary prose.
+NARRATES = re.compile(
+    r"^(added|removed|changed|updated|replaced|refactored|renamed|moved|switched|fixed)\s+"
+    r"(a|an|the|this|that|it|to|from|support|logic|handling)\b"
+    r"|^previously\b|\(previously\b|\bwas previously\b"
+    r"|\bnow (uses|returns|takes|calls|handles|supports|accepts|checks)\b"
+    r"|\b(instead of|rather than) the (old|previous)\b",
+    re.I | re.M)
+#: A comment line that would run: a statement end, a call, an assignment, a declaration, an import.
+#: Not a trailing `}` — `@type {Config}` and `${name}` close a brace without being code.
+CODE = re.compile(
+    r"[;{]$|^}"
+    r"|^[\w.\[\]]+\(.*\);?$"
+    r"|^[\w.\[\]]+\s*[-+*/|&]?=\s*[^=\s]"
+    r"|^(def|func|fn|let|var|const|val|class)\s+\w+\s*[(=:<{]"
+    r"|^(import\s+[\w.]+;?$|from\s+[\w.]+\s+import\b)")
+STOP = frozenset("the a an to of and or for in on is are be it its this that with we by as at "
+                 "from then".split())
+_OPEN = re.compile(r"^(\{-|[/#;%!*\-\[\"'])+\s?")
+_CLOSE = re.compile(r"\s*(\*/|\"\"\"|'''|-\}|\]\])$")
+
+
+def _words(s):
+    s = re.sub(r"([a-z])([A-Z])", r"\1 \2", s).replace("_", " ")
+    return {w.lower().rstrip("s") for w in re.findall(r"[A-Za-z]{2,}", s)
+            if w.lower() not in STOP}
+
+
+def smells(lines, code):
+    """Why this block needs justifying, given the code under it; empty when it does not."""
+    prose = [p for p in (_CLOSE.sub("", _OPEN.sub("", l.strip())).strip() for l in lines) if p]
+    said = "\n".join(prose)
+    why = []
+    if len(lines) > THRESHOLD:
+        why.append(f"is over {THRESHOLD} lines")
+    elif code and len(lines) >= 4 and len(lines) > len(code):
+        why.append(f"is longer than the {len(code)} lines of code it explains")
+    if NARRATES.search(said):
+        why.append("narrates the change, which the diff and commit already record")
+    if prose and 2 * sum(bool(CODE.search(p)) for p in prose) > len(prose):
+        why.append("is commented-out code, and git keeps the old version")
+    elif code and len(lines) <= 2:
+        words = _words(said)
+        if len(words) >= 2 and 4 * len(words & _words(code[0])) >= 3 * len(words):
+            why.append("restates the code under it")
+    return why
+
+
+def _indent(row):
+    return len(row) - len(row.lstrip())
+
+
+def under(rows, indent):
+    """The code a comment explains: its paragraph, or the whole body when it heads one — a blank
+    line ends it only when what follows is back at the comment's own depth."""
+    code = []
+    for i, row in enumerate(rows):
+        if not row.strip():
+            after = next((r for r in rows[i + 1:] if r.strip()), "")
+            if not code or _indent(after) <= indent:
+                break
+        elif _indent(row) < indent:
+            break
         else:
-            if length > THRESHOLD:
-                yield start, length
-            length = 0
-    if length > THRESHOLD:
-        yield start, length
-_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)")
+            code.append(row)
+    return code
 
 
-def bash_added(cwd):
-    """Yield (path, start_line, length) for long comment blocks this command added.
+def findings(text, path, changed=None):
+    """Yield (start, lines, why, code) for each failing block that touches a changed line —
+    an old comment above an edited line is not this edit's to answer for."""
+    rows = text.split("\n")
+    for start, lines in blocks(text, path):
+        end = start + len(lines)
+        if changed is not None and changed.isdisjoint(range(start, end)):
+            continue
+        # A docstring sits inside the body it heads, so read it as one level out.
+        doc = lines[0].lstrip().startswith(('"""', "'''"))
+        code = under(rows[end - 1:], _indent(lines[0]) - doc)
+        why = smells(lines, code)
+        if why:
+            yield start, lines, why, code
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))?")
+
+
+def bash_changed(cwd):
+    """Yield (path, text, changed lines) for each source file this command touched; changed is
+    None for a file git has never seen, since every line of it is new.
 
     Bash writes a file a hundred ways — a heredoc, `sed -i`, a python one-liner, a generator
     script. Parsing the command to find them is unwinnable, so this asks git what landed instead.
@@ -207,27 +299,25 @@ def bash_added(cwd):
                 body = (pathlib.Path(cwd) / name).read_text(errors="replace")
             except OSError:
                 continue
-            if generated(name, cwd, body):
-                continue
-            for start, length in runs(body, name):
-                yield name, start, length
+            if not generated(name, cwd, body):
+                yield name, body, None
 
-    path, base, added = None, 0, []
+    path, changed = None, set()
     for line in diff.stdout.split("\n") + ["diff --git "]:
-        if line.startswith(("diff --git ", "@@ ")):
-            if path and added:
-                for s, n in runs("\n".join(added), path):
-                    yield path, base + s - 1, n
-            added = []
-            hunk = _HUNK.match(line)
-            if hunk:
-                base = int(hunk.group(1))
+        if line.startswith("diff --git "):
+            if path and changed:
+                try:
+                    yield path, (pathlib.Path(cwd) / path).read_text(errors="replace"), changed
+                except OSError:
+                    pass
+            path, changed = None, set()
         elif line.startswith("+++ b/"):
             target = line[6:]
             path = target if (target.endswith(SOURCE) and not vendored(target)
                               and not generated(target, cwd)) else None
-        elif line.startswith("+") and path:
-            added.append(line[1:])
+        elif path and (hunk := _HUNK.match(line)):
+            first = int(hunk[1])
+            changed.update(range(first, first + int(hunk[2] or 1)))
 
 
 def written(tool, data):
@@ -240,6 +330,28 @@ def written(tool, data):
     return ""
 
 
+def edited(tool, data, cwd):
+    """(text, changed lines) from the file on disk, so line numbers and the code under a comment
+    are real. Falls back to the edit's own text when the file is unreadable or the edit isn't in it."""
+    snippet = written(tool, data), None
+    try:
+        text = (pathlib.Path(cwd) / data.get("file_path", "")).read_text(errors="replace")
+    except OSError:
+        return snippet
+    if tool == "Write":
+        return text, None
+    news = [data.get("new_string", "")] if tool == "Edit" else [
+        e.get("new_string", "") for e in data.get("edits", [])]
+    changed = set()
+    for new in filter(None, news):
+        at = text.find(new)
+        if at < 0:
+            return snippet
+        first = text.count("\n", 0, at) + 1
+        changed.update(range(first, first + new.count("\n") + 1))
+    return text, changed
+
+
 def unseen(hits, cwd):
     """Drop hits already reported. A block stays in the diff until fixed or committed, so
     without this every later Bash command repeats the same warning until it is noise."""
@@ -248,20 +360,96 @@ def unseen(hits, cwd):
         old = set(cache.read_text().split("\n"))
     except OSError:
         old = set()
-    fresh = [h for h in hits if f"{cwd}:{h[0]}:{h[2]}" not in old]
+    key = lambda h: f"{cwd}:{h['path']}:{len(h['lines'])}"
+    fresh = [h for h in hits if key(h) not in old]
     if fresh:
         try:
-            keys = list(old | {f"{cwd}:{h[0]}:{h[2]}" for h in fresh})
+            keys = list(old | {key(h) for h in fresh})
             cache.write_text("\n".join(keys[-500:]))
         except OSError:
             pass
     return fresh
 
 
+def pending(payload):
+    """Where this session's findings wait for the end of the turn. A subagent gets its own,
+    so it answers for its comments rather than leaving them to the parent."""
+    key = re.sub(r"\W", "", f"{payload.get('session_id', '')}-{payload.get('agent_id', '')}")
+    return pathlib.Path(tempfile.gettempdir()) / f"comment-critic-{key}.jsonl"
+
+
+def record(hits, payload):
+    if not hits:
+        return
+    try:
+        with pending(payload).open("a") as f:
+            f.writelines(json.dumps(h) + "\n" for h in hits)
+    except OSError:
+        pass
+
+
+def review(payload):
+    """The turn's findings that are still on disk, at their current lines. A comment fixed later
+    in the same turn drops out; one in a file that can't be read is reported as it was seen."""
+    file = pending(payload)
+    try:
+        stored = [json.loads(line) for line in file.read_text().splitlines()]
+        file.unlink()
+    except (OSError, ValueError):
+        return []
+    if payload.get("stop_hook_active"):
+        return []
+    live, kept = {}, {}
+    for h in stored:
+        where = (h["cwd"], h["path"])
+        if where not in live:
+            try:
+                text = (pathlib.Path(where[0]) / where[1]).read_text(errors="replace")
+                live[where] = {"\n".join(f[1]): f for f in findings(text, where[1])}
+            except OSError:
+                live[where] = None
+        block = "\n".join(h["lines"])
+        if live[where] is None:
+            kept[where, block] = h
+        elif block in live[where]:
+            start, _, why, code = live[where][block]
+            kept[where, block] = dict(h, start=start, why=why, code=code)
+    return sorted(kept.values(), key=lambda h: (h["path"], h["start"]))
+
+
+def report(hits, cwd):
+    home, skill = destination(cwd)
+    out = []
+    for h in hits[:8]:
+        n = len(h["lines"])
+        out.append(f"{h['path']}:{h['start']} ({n} line{'s' * (n != 1)}) {'; '.join(h['why'])}:")
+        out.extend("    " + q.strip() for q in h["lines"][:3] + ["…"] * (n > 3) + h["code"][:2])
+    if len(hits) > 8:
+        out.append(f"…and {len(hits) - 8} more.")
+    return (
+        "Comments added this turn that need justifying:\n" + "\n".join(out) + "\n"
+        "Three questions: is it needed? will it change what someone does? "
+        "can it be shorter? Fix or delete each one, or keep it if it says why.\n"
+        f"A ruling or a measurement belongs in {home} — link, don't restate."
+        + (f" Record it with the `{skill}` skill; do not hand-roll the file." if skill else ""))
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
     except Exception:
+        return 0
+
+    event = payload.get("hook_event_name", "")
+    if event in ("SessionStart", "SubagentStart"):
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
+                                                 "additionalContext": POLICY}}))
+        return 0
+    if event in ("Stop", "SubagentStop"):
+        hits = review(payload)
+        if hits:
+            print(report(hits, payload.get("cwd") or os.getcwd()), file=sys.stderr)
+            return 2
         return 0
 
     tool = payload.get("tool_name", "")
@@ -271,29 +459,17 @@ def main():
     tool_input = payload.get("tool_input", {})
     cwd = payload.get("cwd") or os.getcwd()
     if tool == "Bash":
-        hits = unseen(list(bash_added(cwd)), cwd)
+        found = [(p, *f) for p, text, changed in bash_changed(cwd)
+                 for f in findings(text, p, changed)]
     else:
         path = tool_input.get("file_path", "?")
         if not path.endswith(SOURCE) or vendored(path) or generated(path, cwd):
             return 0
-        hits = [(path, s, n) for s, n in runs(written(tool, tool_input), path)]
-    if not hits:
-        return 0
-
-    home, skill = destination(cwd)
-    found = [(s, n) for _, s, n in hits]
-    path = ", ".join(dict.fromkeys(h[0] for h in hits))
-    where = ", ".join(f"~line {s} ({n} lines)" for s, n in found[:3])
-    print(
-        f"Comment block over {THRESHOLD} lines in {path}: {where}.\n"
-        "Three questions: is it needed? will it change what someone does? "
-        "can it be shorter?\n"
-        "Comment why, not what. If the explanation is longer than the code, cut the explanation. "
-        f"A ruling or a measurement belongs in {home} — link, don't restate."
-        + (f" Record it with the `{skill}` skill; do not hand-roll the file." if skill else ""),
-        file=sys.stderr,
-    )
-    return 2
+        text, changed = edited(tool, tool_input, cwd)
+        found = [(path, *f) for f in findings(text, path, changed)]
+    hits = [dict(cwd=cwd, path=p, start=s, lines=l, why=w, code=c) for p, s, l, w, c in found]
+    record(unseen(hits, cwd) if tool == "Bash" else hits, payload)
+    return 0
 
 
 if __name__ == "__main__":

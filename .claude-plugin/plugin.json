@@ -1,7 +1,7 @@
 {
   "name": "comment-critic",
-  "version": "0.7.1",
-  "description": "Flags comment blocks long enough to need justifying, and asks the three questions",
+  "version": "0.8.0",
+  "description": "Hands the model a comment policy, then, once per turn, quotes each new comment that narrates, restates, is dead code or outweighs its code, and asks the three questions",
   "author": { "name": "Oleh Smirnov", "email": "oleh.smirnov@icloud.com" },
   "license": "MIT",
   "keywords": ["comments", "hooks", "code-quality"]

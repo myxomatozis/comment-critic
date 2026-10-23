@@ -2,9 +2,37 @@
 
 ![comment critic — an eleven line comment block cut down to two](assets/banner.svg)
 
-A Claude Code plugin. One advisory hook: after any write, if a comment block runs longer than
-8 lines, it says where and asks three questions — **is it needed, will it change what someone
-does, can it be shorter?** It cannot judge. You answer.
+A Claude Code plugin. It hands the model a comment policy at session start and to every subagent,
+then, when the turn ends, quotes each new comment that fails it — with the code under it — and asks
+three questions: **is it needed, will it change what someone does, can it be shorter?** It cannot
+judge. The model answers, and it judges better from a quote than from a line count.
+
+## When it speaks
+
+Once per turn, not once per write. Each write notes what it finds and says nothing; when Claude
+finishes, one review lists every comment from the turn that still fails, re-read from disk. A
+comment fixed by a later edit in the same turn is never mentioned, and one that moved is quoted
+at its new line. A subagent reviews its own comments when it finishes. The review's follow-up
+turn ends without another review, so it cannot loop.
+
+## What it flags
+
+A new comment that:
+
+| check | example |
+|---|---|
+| narrates the change | `// Updated to use the shared cache`, `# Previously read from disk` |
+| restates the code under it | `// Get the user` over `user := getUser()` |
+| is commented-out code | `// render(old);` |
+| is longer than the code it explains | four lines over one; a docstring is weighed against its whole body |
+| runs past 20 lines | a backstop for whatever the rest miss |
+
+Only comments the write touched are judged — an old comment above an edited line is not this
+edit's to answer for. Line numbers and the code under a comment come from the file on disk.
+
+Each check is a word list or a pattern, not a parser, tuned to stay quiet on comments that say
+why: *"Added items are flushed on save"*, *"the previously selected row"* and
+`/** @type {Config} */` all pass.
 
 Catches the write however it happened. `Write`, `Edit` and `MultiEdit` are read from the tool
 payload; for `Bash` the hook asks `git` what actually changed, so a heredoc, `sed -i`, a `python3 -`
@@ -94,22 +122,25 @@ never a wrong write.
 
 | env | default | |
 |---|---|---|
-| `COMMENT_CRITIC_THRESHOLD` | `8` | Lines before a block is flagged. 8 is ~p80 of a real codebase's blocks. Measure your own: outliers by distribution beat outliers by taste. |
+| `COMMENT_CRITIC_THRESHOLD` | `20` | Lines before any block is flagged, whatever it says. A backstop: the content checks do the real work. |
 | `COMMENT_CRITIC_HOME` | discovered | Override when the answer is two places, or a name nobody else uses. |
 | `COMMENT_CRITIC_SKILL` | discovered | Override when your skill is not named after the thing it files. |
 | `COMMENT_CRITIC_SKIP` | unset | Comma-separated path segments. `Generated,legacy` adds to the built-in list; `-build` removes a default. |
 
 ## The policy it enforces
 
-The hook only nags. Paste this into your `CLAUDE.md` so there's a rule to answer to:
+Injected on session start, resume, `/clear` and compaction, and into every subagent — nothing to
+paste. Prevention is cheaper than the nag:
 
 ```markdown
 ## Comment policy — comment as little as possible
 
-Every comment must survive three questions: **is it needed, will it change what someone does,
-can it be shorter?** Default to none.
+Every comment must survive three questions: is it needed, will it change what someone does,
+can it be shorter? Default to none.
 
-- Comment **why**, never **what**. The code says what.
+- Comment why, never what. The code says what.
+- Never narrate the change ("updated to use X", "previously Y"). The diff and commit say that.
+- No commented-out code. Git keeps the old version.
 - If the explanation is longer than the code it explains, delete the explanation.
 - A ruling, a measurement or a history belongs in a doc. Link to it; don't restate it.
 ```

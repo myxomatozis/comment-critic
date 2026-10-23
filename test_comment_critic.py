@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 """Run: python3 test_comment_critic.py — fails loudly if the detector drifts."""
-import json, os, pathlib, shutil, subprocess, sys, tempfile
+import json, os, pathlib, shutil, subprocess, sys, tempfile, uuid
 
 HOOK = str(pathlib.Path(__file__).parent / "hooks" / "comment-critic.py")
 SEEN = pathlib.Path(tempfile.gettempdir()) / "comment-critic-seen"
-long_block = "\n".join(f"// line {i}" for i in range(12))
+long_block = "\n".join(f"// line {i}" for i in range(24))
 short_block = "\n".join(f"// line {i}" for i in range(4))
 
 
-def run(payload, env=None, cwd=None):
+def hook(payload, env=None):
     p = subprocess.run([sys.executable, HOOK], input=json.dumps(payload),
-                       capture_output=True, text=True, env=env, cwd=cwd)
+                       capture_output=True, text=True, env=env)
     return p.returncode, p.stderr
+
+
+def run(payload, env=None, cwd=None):
+    """One write, then the end of its turn: the write stays silent, the Stop speaks."""
+    turn = dict(session_id=uuid.uuid4().hex, cwd=payload.get("cwd") or os.getcwd())
+    code, err = hook(dict(payload, **turn), env)
+    assert code == 0 and not err, f"a write must stay silent until the turn ends: {err}"
+    return hook(dict(turn, hook_event_name="Stop"), env)
 
 
 # --- the direct tool payloads -------------------------------------------------
 code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}})
-assert code == 2 and "12 lines" in err, err
+assert code == 2 and "24 lines" in err, err
 
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": short_block}})
 assert code == 0
@@ -38,9 +46,9 @@ env = dict(os.environ, COMMENT_CRITIC_THRESHOLD="eight")
 code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
 assert code == 2 and "Traceback" not in err, err
 
-env = dict(os.environ, COMMENT_CRITIC_THRESHOLD="20")
+env = dict(os.environ, COMMENT_CRITIC_THRESHOLD="30")
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.swift", "content": long_block}}, env)
-assert code == 0, "raised threshold must silence a 12-line block"
+assert code == 0, "raised threshold must silence a 24-line block"
 
 # Zero config: the home and the skill are discovered from the repo when nothing is set.
 bare = dict(os.environ)
@@ -100,30 +108,30 @@ LANGS = {
     "b.clj": ("# %d", False),
 }
 for name, (fmt, should) in LANGS.items():
-    body = "\n".join(fmt % i for i in range(12))
+    body = "\n".join(fmt % i for i in range(24))
     code, err = run({"tool_name": "Write", "tool_input": {"file_path": name, "content": body}})
     assert (code == 2) is should, f"{name} with {fmt!r}: expected fire={should}, got {code}"
 
 # Block comments count even when their lines carry no marker of their own.
-c_block = "/*\n" + "\n".join(f"   paragraph {i}" for i in range(11)) + "\n*/"
+c_block = "/*\n" + "\n".join(f"   paragraph {i}" for i in range(23)) + "\n*/"
 code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.c", "content": c_block}})
-assert code == 2 and "13 lines" in err, err  # the delimiters are comment lines too
+assert code == 2 and "25 lines" in err, err  # the delimiters are comment lines too
 
-docstring = '"""\n' + "\n".join(f"prose {i}" for i in range(11)) + '\n"""'
+docstring = '"""\n' + "\n".join(f"prose {i}" for i in range(23)) + '\n"""'
 code, err = run({"tool_name": "Write", "tool_input": {"file_path": "a.py", "content": docstring}})
-assert code == 2 and "13 lines" in err, err
+assert code == 2 and "25 lines" in err, err
 
 # A long string that happens to be triple-quoted is data, not prose.
-query = 'SQL = """\n' + "\n".join(f"  select {i}," for i in range(11)) + '\n"""'
+query = 'SQL = """\n' + "\n".join(f"  select {i}," for i in range(23)) + '\n"""'
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.py", "content": query}})
 assert code == 0, "an assigned multi-line string is not a comment block"
 
 # A one-line block comment opens nothing.
-oneline = "\n".join("/* %d */" % i for i in range(12))
+oneline = "\n".join("/* %d */" % i for i in range(24))
 code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "a.c", "content": oneline}})
-assert code == 2, "twelve one-line comments are still twelve comment lines"
+assert code == 2, "24 one-line comments are still 24 comment lines"
 
-def block_for(path, n=12):
+def block_for(path, n=24):
     """A comment block in the language the path implies — otherwise a vendored-path test would
     pass because the marker was wrong, not because the path was skipped."""
     mark = {"py": "#", "rb": "#", "sh": "#", "ex": "#", "jl": "#", "tf": "#",
@@ -147,7 +155,7 @@ sandbox2 = tempfile.mkdtemp()
 for name, header in HEADERS.items():
     f = pathlib.Path(sandbox2) / name
     f.parent.mkdir(parents=True, exist_ok=True)
-    body = block_for(name, 12)
+    body = block_for(name, 24)
     f.write_text(header + "\n" + body + "\n")
     code, _ = run({"tool_name": "Write", "cwd": sandbox2,
                    "tool_input": {"file_path": name, "content": body}})
@@ -212,6 +220,123 @@ code, _ = run({"tool_name": "Write", "tool_input": {"file_path": "node_modules/a
                                                     "content": long_block}}, env)
 assert code == 0, "un-skipping one name must not disarm the rest"
 
+# --- what a comment says, not how long it is ----------------------------------
+def says(path, body):
+    return run({"tool_name": "Write", "tool_input": {"file_path": path, "content": body}})
+
+
+SMELLS = {
+    "narrates the change": ("a.swift", "// Updated to use the shared cache\nlet c = Cache.shared"),
+    "narrates the change ": ("a.py", "x = load()  \n# Previously this read from disk\nx = fetch()"),
+    "commented-out code": ("a.ts", "// const old = compute(a, b);\n// render(old);\nrender(a)"),
+    "restates the code": ("a.go", "// Get the user\nuser := getUser()"),
+    "longer than the 1 lines": ("a.rs", "// one\n// two\n// three\n// four\nlet x = 1;"),
+}
+for want, (path, body) in SMELLS.items():
+    code, err = says(path, body)
+    assert code == 2 and want.strip() in err, f"{want!r} not reported for {body!r}: {err}"
+
+# The finding quotes the comment and the code under it, so the model can judge it.
+code, err = says("a.swift", "// Updated to use the shared cache\nlet c = Cache.shared")
+assert "    // Updated to use the shared cache" in err and "    let c = Cache.shared" in err, err
+
+# A comment that says why passes, however close to the code its words are.
+GOOD = [
+    ("a.swift", "// Retry once: the token may have just expired upstream\nretry(once: true)"),
+    ("a.py", "# Added items are flushed on save, not on insert\nself.pending.append(x)"),
+    ("a.ts", "// The previously selected row keeps focus\nfocus(prev)"),
+    ("a.go", "// See RFC 9110 section 15\nreturn 404"),
+    ("a.py", "def f():\n    # Sorted, because the API returns rows unordered\n    rows.sort()\n"
+             "    return rows\n"),
+    ("a.c", "/* Note (see below) */\nint x = 1;"),
+    ("a.js", "/** @type {import('prettier').Config} */\nmodule.exports = {"),
+    ("a.rs", "// JUEL: ${varName}\n&expr[2..]"),
+    ("a.go", "// Now use UpdateThreadLabels to add another label\nset(labels)"),
+    # a docstring explains the whole body, blank lines and all
+    ("a.py", 'def f():\n    """One.\n\n    Two.\n    Three.\n    """\n    a = 1\n\n    b = 2\n'
+             "    c = 3\n    d = 4\n    return a\n\n\ndef g():\n    pass\n"),
+]
+# ...but a paragraph comment explains only its paragraph.
+code, err = says("a.py", "def f():\n    # one\n    # two\n    # three\n    # four\n    a = 1\n\n"
+                         "    b = 2\n    c = 3\n    d = 4\n    e = 5\n")
+assert code == 2 and "longer than the 1 lines" in err, err
+for path, body in GOOD:
+    code, err = says(path, body)
+    assert code == 0, f"a why-comment was flagged: {body!r}\n{err}"
+
+# An Edit is judged against the file on disk: real line numbers, and only what it touched.
+disk = tempfile.mkdtemp()
+src = pathlib.Path(disk) / "a.swift"
+src.write_text("// Updated to use the old thing\nlet a = 1\n\nlet b = 2\n"
+               "// Updated to use the shared cache\nlet c = Cache.shared\n")
+code, err = run({"tool_name": "Edit", "cwd": disk, "tool_input": {
+    "file_path": "a.swift", "new_string": "// Updated to use the shared cache\nlet c = Cache.shared"}})
+assert code == 2 and "a.swift:5 " in err, err
+assert "old thing" not in err, "a comment the edit did not touch is not its to answer for"
+
+# The code under the comment comes from disk too, not the edit's fragment.
+src.write_text("// one\n// two\n// three\n// four\nfunc f() {\n  a()\n  b()\n  c()\n}\n")
+code, err = run({"tool_name": "Edit", "cwd": disk, "tool_input": {
+    "file_path": "a.swift", "new_string": "// one\n// two\n// three\n// four\nfunc f() {"}})
+assert code == 0, f"the function is 5 lines on disk, longer than its comment: {err}"
+
+# The policy reaches the session and every subagent before anything is written.
+for event in ("SessionStart", "SubagentStart"):
+    p = subprocess.run([sys.executable, HOOK], input=json.dumps({"hook_event_name": event}),
+                       capture_output=True, text=True)
+    out = json.loads(p.stdout)["hookSpecificOutput"]
+    assert p.returncode == 0 and out["hookEventName"] == event, p
+    assert "three questions" in out["additionalContext"], out
+
+# --- one review per turn ------------------------------------------------------
+turn_dir = tempfile.mkdtemp()
+a, b = pathlib.Path(turn_dir) / "a.swift", pathlib.Path(turn_dir) / "b.py"
+NARRATE = "// Updated to use the shared cache\nlet c = Cache.shared\n"
+
+
+def write(f, body, **extra):
+    f.write_text(body)
+    return hook(dict(extra, tool_name="Write", cwd=turn_dir,
+                     tool_input={"file_path": f.name, "content": body}))
+
+
+def stop(event="Stop", **extra):
+    return hook(dict(extra, hook_event_name=event, cwd=turn_dir))
+
+
+# Writes across files collect into a single review, which is then spent.
+s = dict(session_id="batch")
+assert write(a, NARRATE, **s) == (0, "")
+assert write(b, "# Previously this read from disk\nx = fetch()\n", **s) == (0, "")
+code, err = stop(**s)
+assert code == 2 and err.count("narrates") == 2 and "a.swift:1 " in err and "b.py:1 " in err, err
+assert stop(**s) == (0, ""), "a review is spent once given"
+
+# A comment fixed later in the same turn is not reported; one that moved is, at its new line.
+s = dict(session_id="fixed")
+write(a, NARRATE, **s)
+write(b, "# Previously this read from disk\nx = fetch()\n", **s)
+a.write_text("let c = Cache.shared\n")
+b.write_text("import os\n\n# Previously this read from disk\nx = fetch()\n")
+code, err = stop(**s)
+assert code == 2 and "a.swift" not in err and "b.py:3 " in err, err
+
+# The review's own follow-up turn ends without a second review, and leaves nothing behind.
+s = dict(session_id="loop")
+write(a, NARRATE, **s)
+assert stop(stop_hook_active=True, **s) == (0, "")
+assert stop(**s) == (0, ""), "findings dropped on the follow-up must not resurface next turn"
+
+# A subagent answers for its own comments; the parent's review does not inherit them.
+s = dict(session_id="parent")
+write(a, NARRATE, agent_id="sub1", **s)
+assert stop(**s) == (0, ""), "the parent did not write it"
+code, err = stop("SubagentStop", agent_id="sub1", **s)
+assert code == 2 and "narrates" in err, err
+
+# Nothing written, nothing said.
+assert stop(session_id="quiet") == (0, "")
+
 # --- Bash writes, however they land -------------------------------------------
 repo = tempfile.mkdtemp()
 subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
@@ -228,7 +353,7 @@ mechanisms = {
     "python3 -":    py_heredoc,
     "printf":       f"printf '%s' '{long_block}' > a.swift",
     "echo":         f"echo '{long_block}' > a.swift",
-    "sed -i":       "sed -i '' 's|let x = 1|" + "\\n".join(f"// s{i}" for i in range(12)) + "|' a.swift",
+    "sed -i":       "sed -i '' 's|let x = 1|" + "\\n".join(f"// s{i}" for i in range(24)) + "|' a.swift",
     "nested dir":   f"mkdir -p sub && cat > sub/b.swift <<'EOF'\n{long_block}\nEOF",
 }
 skipped = {
@@ -283,6 +408,13 @@ subprocess.run(f"cat > a.swift <<'EOF'\n{long_block}\nEOF", cwd=repo, shell=True
 assert run({"tool_name": "Bash", "tool_input": {"command": "x"}, "cwd": repo})[0] == 2
 assert run({"tool_name": "Bash", "tool_input": {"command": "git status"}, "cwd": repo})[0] == 0, \
     "a reported block must not nag again"
+
+# A smell lands through Bash too, at its line in the file rather than in the hunk.
+reset()
+subprocess.run("printf 'let x = 1\\n// Previously this was a guard\\nlet y = 2\\n' > a.swift",
+               cwd=repo, shell=True, check=True)
+code, err = run({"tool_name": "Bash", "tool_input": {"command": "x"}, "cwd": repo})
+assert code == 2 and "a.swift:2 " in err and "narrates" in err, err
 
 # Outside a git repo, Bash is silent rather than crashing.
 plain = tempfile.mkdtemp()
